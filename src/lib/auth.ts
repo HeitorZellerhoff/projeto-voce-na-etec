@@ -1,4 +1,4 @@
-import { db } from './db';
+import { prisma } from './prisma';
 import { getSession } from './jwt';
 
 export * from './jwt';
@@ -12,7 +12,7 @@ export async function requireAuth() {
   }
   
   // Confirmação extra no banco de dados para evitar tokens defasados se o setor mudar
-  const user = await db.user.findUnique({
+  const user = await prisma.user.findUnique({
     where: { id: session.userId },
     select: { sectorId: true }
   });
