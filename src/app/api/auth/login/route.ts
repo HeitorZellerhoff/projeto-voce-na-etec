@@ -62,12 +62,8 @@ export async function POST(request: Request) {
       }
     });
 
-  } catch (error: any) {
+  } catch (error) {
     console.error('Login error:', error);
-    return NextResponse.json({ 
-      error: 'Erro interno no servidor', 
-      details: error?.message || String(error),
-      stack: error?.stack 
-    }, { status: 500 });
+    return NextResponse.json({ error: 'Erro interno no servidor' }, { status: 500 });
   }
 }
