@@ -1,0 +1,268 @@
+generator client {
+  provider        = "prisma-client-js"
+  output          = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserStatus {
+  ATIVO
+  BLOQUEADO
+  INATIVO
+  PENDENTE
+}
+
+model User {
+  id                String       @id @default(uuid()) @db.Uuid
+  name              String
+  registration      String       @unique
+  email             String       @unique
+  passwordHash      String
+  status            UserStatus
+  mustChangePassword Boolean     @default(true)
+  sectorId          String       @db.Uuid
+  roleId            String       @db.Uuid
+  lastLoginAt       DateTime?
+  passwordChangedAt DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  sector            Sector       @relation(fields: [sectorId], references: [id])
+  role              Role         @relation(fields: [roleId], references: [id])
+  movements         StockMovement[]
+  passwordResets    PasswordResetToken[]
+  purchasesRequested Purchase[]  @relation("PurchaseRequestedBy")
+  purchasesApproved  Purchase[]  @relation("PurchaseApprovedBy")
+}
+
+enum SectorStatus {
+  ATIVO
+  INATIVO
+}
+
+model Sector {
+  id              String       @id @default(uuid()) @db.Uuid
+  name            String
+  code            String       @unique
+  description     String?
+  location        String?
+  responsibleName String?
+  status          SectorStatus
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  users           User[]
+  stocks          Stock[]
+  movements       StockMovement[]
+}
+
+model Role {
+  id          String           @id @default(uuid()) @db.Uuid
+  name        String           @unique
+  description String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  users       User[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id          String           @id @default(uuid()) @db.Uuid
+  action      String           @unique
+  module      String
+  description String?
+
+  roles       RolePermission[]
+}
+
+model RolePermission {
+  roleId       String @db.Uuid
+  permissionId String @db.Uuid
+
+  role         Role       @relation(fields: [roleId], references: [id])
+  permission   Permission @relation(fields: [permissionId], references: [id])
+
+  @@id([roleId, permissionId])
+}
+
+model Category {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String
+  code        String    @unique
+  description String?
+
+  products    Product[]
+}
+
+enum ProductStatus {
+  ATIVO
+  INATIVO
+}
+
+model Product {
+  id           String        @id @default(uuid()) @db.Uuid
+  code         String        @unique
+  name         String
+  description  String?
+  categoryId   String        @db.Uuid
+  unit         String
+  minimumStock Int
+  maximumStock Int
+  status       ProductStatus
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  category     Category      @relation(fields: [categoryId], references: [id])
+  batches      ProductBatch[]
+  stocks       Stock[]
+  movements    StockMovement[]
+  purchaseItems PurchaseItem[]
+}
+
+model ProductBatch {
+  id             String    @id @default(uuid()) @db.Uuid
+  productId      String    @db.Uuid
+  batchNumber    String
+  expirationDate DateTime
+  manufacturer   String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  product        Product   @relation(fields: [productId], references: [id])
+  stocks         Stock[]
+  movements      StockMovement[]
+
+  @@index([batchNumber])
+  @@index([expirationDate])
+}
+
+model Stock {
+  id        String  @id @default(uuid()) @db.Uuid
+  productId String  @db.Uuid
+  sectorId  String  @db.Uuid
+  batchId   String? @db.Uuid
+  quantity  Int     @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  product   Product       @relation(fields: [productId], references: [id])
+  sector    Sector        @relation(fields: [sectorId], references: [id])
+  batch     ProductBatch? @relation(fields: [batchId], references: [id])
+
+  @@unique([productId, sectorId, batchId])
+}
+
+enum MovementType {
+  ENTRADA
+  SAIDA
+  AJUSTE
+  TRANSFERENCIA
+  DEVOLUCAO
+  PERDA
+  VENCIMENTO
+}
+
+model StockMovement {
+  id              String       @id @default(uuid()) @db.Uuid
+  productId       String       @db.Uuid
+  sectorId        String       @db.Uuid
+  batchId         String?      @db.Uuid
+  type            MovementType
+  quantity        Int
+  previousBalance Int
+  newBalance      Int
+  reason          String
+  observation     String?
+  performedByUserId String     @db.Uuid
+  createdAt       DateTime     @default(now())
+
+  product         Product       @relation(fields: [productId], references: [id])
+  sector          Sector        @relation(fields: [sectorId], references: [id])
+  batch           ProductBatch? @relation(fields: [batchId], references: [id])
+  performedBy     User          @relation(fields: [performedByUserId], references: [id])
+
+  @@index([sectorId, createdAt])
+  @@index([productId])
+}
+
+enum SupplierStatus {
+  ATIVO
+  INATIVO
+}
+
+model Supplier {
+  id          String         @id @default(uuid()) @db.Uuid
+  name        String
+  cnpj        String         @unique
+  email       String?
+  phone       String?
+  status      SupplierStatus
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  purchases   Purchase[]
+}
+
+enum PurchaseStatus {
+  RASCUNHO
+  PENDENTE_APROVACAO
+  APROVADO
+  EM_TRANSITO
+  ENTREGUE
+  CANCELADO
+}
+
+model Purchase {
+  id                String         @id @default(uuid()) @db.Uuid
+  supplierId        String         @db.Uuid
+  status            PurchaseStatus
+  totalAmount       Float?
+  requestedByUserId String         @db.Uuid
+  approvedById      String?        @db.Uuid
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  supplier          Supplier       @relation(fields: [supplierId], references: [id])
+  requestedBy       User           @relation("PurchaseRequestedBy", fields: [requestedByUserId], references: [id])
+  approvedBy        User?          @relation("PurchaseApprovedBy", fields: [approvedById], references: [id])
+  items             PurchaseItem[]
+}
+
+model PurchaseItem {
+  id         String   @id @default(uuid()) @db.Uuid
+  purchaseId String   @db.Uuid
+  productId  String   @db.Uuid
+  quantity   Int
+  unitPrice  Float
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  purchase   Purchase @relation(fields: [purchaseId], references: [id])
+  product    Product  @relation(fields: [productId], references: [id])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String?  @db.Uuid
+  sectorId  String?  @db.Uuid
+  action    String
+  entity    String
+  entityId  String?
+  metadata  Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+}
+
+model PasswordResetToken {
+  id         String    @id @default(uuid()) @db.Uuid
+  tokenHash  String
+  userId     String    @db.Uuid
+  expiresAt  DateTime
+  usedAt     DateTime?
+
+  user       User      @relation(fields: [userId], references: [id])
+}
