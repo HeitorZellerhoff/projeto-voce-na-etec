@@ -27,7 +27,7 @@ export default function LoginPage() {
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.message || data.error || 'Erro ao realizar login');
+        throw new Error(data.details || data.message || data.error || 'Erro ao realizar login');
       }
 
       if (data.mustChangePassword) {
