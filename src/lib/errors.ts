@@ -27,7 +27,7 @@ export function handleApiError(error: any, request: Request, defaultMessage = 'O
   // Normalização de validações Zod
   else if (error?.name === 'ZodError') {
     statusCode = 400;
-    message = error.errors[0]?.message || 'Dados de entrada inválidos.';
+    message = (error as any).errors[0]?.message || 'Dados de entrada inválidos.';
   }
 
   // Logs mantidos para observabilidade interna (Datadog/Vercel Logs)

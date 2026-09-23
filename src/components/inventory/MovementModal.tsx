@@ -61,7 +61,7 @@ export function MovementModal({ isOpen, onClose, type, productId, productName, o
       onClose();
     } catch (err: any) {
       if (err instanceof z.ZodError) {
-        setError(err.errors[0].message);
+        setError((err as any).errors[0].message);
       } else {
         setError(err.message);
       }

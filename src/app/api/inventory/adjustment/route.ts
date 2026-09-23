@@ -18,7 +18,7 @@ export const POST = withPermission('STOCK_ADJUST', withSectorScoping(async (requ
     const body = await request.json();
     const result = adjustmentSchema.safeParse(body);
 
-    if (!result.success) return NextResponse.json({ error: result.error.errors[0].message }, { status: 400 });
+    if (!result.success) return NextResponse.json({ error: (result.error as any).errors[0].message }, { status: 400 });
 
     const { productId, batchId, newQuantity, reason, observation, sectorId } = result.data;
 
@@ -28,7 +28,7 @@ export const POST = withPermission('STOCK_ADJUST', withSectorScoping(async (requ
           productId_sectorId_batchId: {
             productId,
             sectorId,
-            batchId: batchId ?? null,
+            batchId: (batchId ?? null) as any,
           }
         }
       });
@@ -45,14 +45,14 @@ export const POST = withPermission('STOCK_ADJUST', withSectorScoping(async (requ
           productId_sectorId_batchId: {
             productId,
             sectorId,
-            batchId: batchId ?? null,
+            batchId: (batchId ?? null) as any,
           }
         },
         update: { quantity: newQuantity },
         create: {
           productId,
           sectorId,
-          batchId: batchId ?? null,
+          batchId: (batchId ?? null) as any,
           quantity: newQuantity
         }
       });

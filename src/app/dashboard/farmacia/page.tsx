@@ -1,4 +1,4 @@
-import { Package, AlertTriangle, Clock, ArrowRightLeft } from 'lucide-react';
+import { Package, AlertTriangle, Clock, ArrowRightLeft, ShoppingCart } from 'lucide-react';
 
 export default function FarmaciaDashboard() {
   return (

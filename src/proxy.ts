@@ -20,7 +20,7 @@ if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) 
   });
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   
   // Ignorar rotas públicas e arquivos estáticos
@@ -36,7 +36,7 @@ export async function middleware(request: NextRequest) {
   // Prevenção de Ataques de Força Bruta (Rate Limiting) via Vercel Edge e Upstash
   if (pathname === '/api/auth/login' || pathname === '/api/auth/forgot-password') {
     if (ratelimit) {
-      const ip = request.ip || request.headers.get('x-forwarded-for') || '127.0.0.1';
+      const ip = request.headers.get('x-forwarded-for') || '127.0.0.1';
       const { success } = await ratelimit.limit(ip);
       if (!success) {
         return NextResponse.json(

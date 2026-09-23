@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { User, Sector, Role } from '@prisma/client';
+import { User, Sector, Role } from '@/generated/prisma';
 import { Search, Plus, ShieldBan, ShieldCheck, UserCog } from 'lucide-react';
 import { ConfirmActionModal } from '@/components/shared/ConfirmActionModal';
 

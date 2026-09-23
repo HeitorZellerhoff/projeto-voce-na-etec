@@ -67,7 +67,7 @@ export function AdjustmentModal({ isOpen, onClose, productId, productName, previ
       onClose();
     } catch (err: any) {
       if (err instanceof z.ZodError) {
-        setError(err.errors[0].message);
+        setError((err as any).errors[0].message);
       } else {
         setError(err.message);
       }

@@ -36,7 +36,7 @@ export async function logAuditAction(params: AuditParams) {
       ipAddress = params.req.headers.get('x-forwarded-for') || undefined;
       // Compatibilidade com NextRequest que extrai o IP real da Vercel
       if (!ipAddress && 'ip' in params.req) {
-        ipAddress = (params.req as NextRequest).ip;
+        ipAddress = (params.req as any).ip;
       }
       userAgent = params.req.headers.get('user-agent') || undefined;
     }

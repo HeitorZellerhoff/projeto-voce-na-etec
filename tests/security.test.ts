@@ -7,10 +7,10 @@ import { MovementType, PurchaseStatus } from '../src/generated/prisma';
 const MOCK_API_BASE = process.env.API_BASE_URL || 'http://localhost:3000/api';
 
 describe('Suite de Exploração e Segurança de Identidades (Section 62)', () => {
-  let adminToken: string;
-  let enfermeiroToken: string;
-  let farmaciaSectorId: string;
-  let almoxarifadoSectorId: string;
+  let adminToken = 'mock-token';
+  let enfermeiroToken = 'mock-enfermeiro';
+  let farmaciaSectorId = 'mock-farmacia';
+  let almoxarifadoSectorId = 'mock-almoxarifado';
 
   beforeAll(async () => {
     // Contexto de Setup omitido para focar na lógica dos asserções do Teste
