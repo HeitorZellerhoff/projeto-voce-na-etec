@@ -11,24 +11,8 @@ jobs:
     name: Build & Validate
     runs-on: ubuntu-latest
 
-    # Criação de um banco PostgreSQL local para a pipeline de testes
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_USER: prisma
-          POSTGRES_PASSWORD: prisma_password
-          POSTGRES_DB: testing_db
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     env:
-      DATABASE_URL: "postgresql://prisma:prisma_password@localhost:5432/testing_db?schema=public"
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
     steps:
       - name: Checkout repository
