@@ -23,7 +23,7 @@ export const POST = withPermission('STOCK_ADJUST', withSectorScoping(async (requ
     const { productId, batchId, newQuantity, reason, observation, sectorId } = result.data;
 
     const transactionResult = await prisma.$transaction(async (tx) => {
-      let stock = await tx.stock.findUnique({
+      const stock = await tx.stock.findUnique({
         where: {
           productId_sectorId_batchId: {
             productId,
