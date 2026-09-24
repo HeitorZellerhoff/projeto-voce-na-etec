@@ -31,9 +31,11 @@ jobs:
         run: npx prisma generate
 
       - name: Run Database Migrations
+        if: env.DATABASE_URL != ''
         run: npx prisma migrate deploy
 
       - name: Run Database Seed
+        if: env.DATABASE_URL != ''
         run: npx prisma db seed
 
       - name: Typecheck (TypeScript)
