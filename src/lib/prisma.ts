@@ -7,6 +7,12 @@ neonConfig.webSocketConstructor = ws;
 
 const prismaClientSingleton = () => {
   const connectionString = `${process.env.DATABASE_URL}`;
+  
+  // Se for um banco local (como no GitHub Actions), usa o Prisma puro sem o Adapter do Neon
+  if (connectionString.includes('localhost') || connectionString.includes('127.0.0.1') || process.env.CI) {
+    return new PrismaClient();
+  }
+
   const adapter = new PrismaNeon({ connectionString });
   return new PrismaClient({ adapter });
 };
