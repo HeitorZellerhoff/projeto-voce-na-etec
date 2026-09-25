@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { User, Sector, Role } from '@/generated/prisma';
 import { Search, Plus, ShieldBan, ShieldCheck, UserCog } from 'lucide-react';
 import { ConfirmActionModal } from '@/components/shared/ConfirmActionModal';
+import { CreateUserModal } from './CreateUserModal';
 
 type UserWithRelations = User & { sector: Sector; role: Role };
 
@@ -143,6 +144,14 @@ export function UsersManagementClient({ initialUsers, sectors, roles }: Props) {
           </table>
         </div>
       </div>
+
+      <CreateUserModal
+        isOpen={isRegisterModalOpen}
+        onClose={() => setIsRegisterModalOpen(false)}
+        sectors={sectors}
+        roles={roles}
+        onSuccess={(newUser) => setUsers([newUser, ...users])}
+      />
 
       <ConfirmActionModal 
         isOpen={!!userToBlock}

@@ -8,8 +8,10 @@ interface MovementModalProps {
   isOpen: boolean;
   onClose: () => void;
   type: 'ENTRADA' | 'SAIDA';
-  productId: string;
-  productName: string;
+  productId?: string;
+  productName?: string;
+  products?: { id: string; name: string }[];
+  batches?: { id: string; batchNumber: string; productId: string }[];
   onSuccess: () => void;
 }
 
@@ -20,7 +22,17 @@ const movementSchema = z.object({
   observation: z.string().optional(),
 });
 
-export function MovementModal({ isOpen, onClose, type, productId, productName, onSuccess }: MovementModalProps) {
+export function MovementModal({ 
+  isOpen, 
+  onClose, 
+  type, 
+  productId, 
+  productName, 
+  products = [], 
+  batches = [], 
+  onSuccess 
+}: MovementModalProps) {
+  const [selectedProductId, setSelectedProductId] = useState(productId || (products[0]?.id ?? ''));
   const [quantity, setQuantity] = useState('');
   const [batchId, setBatchId] = useState('');
   const [reason, setReason] = useState('');
@@ -36,6 +48,11 @@ export function MovementModal({ isOpen, onClose, type, productId, productName, o
     setError('');
 
     try {
+      const targetProdId = productId || selectedProductId;
+      if (!targetProdId) {
+        throw new Error('Selecione um produto para a movimentação');
+      }
+
       const parsed = movementSchema.parse({
         quantity: parseInt(quantity, 10),
         batchId: batchId || undefined,
@@ -48,7 +65,7 @@ export function MovementModal({ isOpen, onClose, type, productId, productName, o
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...parsed, productId })
+        body: JSON.stringify({ ...parsed, productId: targetProdId })
       });
 
       const data = await res.json();
@@ -71,6 +88,7 @@ export function MovementModal({ isOpen, onClose, type, productId, productName, o
   };
 
   const isEntry = type === 'ENTRADA';
+  const effectiveProductName = productName || products.find(p => p.id === (productId || selectedProductId))?.name || 'Selecione o item';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
@@ -86,7 +104,7 @@ export function MovementModal({ isOpen, onClose, type, productId, productName, o
               </div>
               <div>
                 <h2 className="text-lg font-bold text-white">Registrar {isEntry ? 'Entrada' : 'Saída'}</h2>
-                <p className="text-xs text-zinc-400">{productName}</p>
+                <p className="text-xs text-zinc-400">{effectiveProductName}</p>
               </div>
             </div>
             <button onClick={onClose} disabled={isLoading} className="text-zinc-500 hover:text-white transition-colors">
@@ -101,6 +119,23 @@ export function MovementModal({ isOpen, onClose, type, productId, productName, o
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
+            {!productId && products.length > 0 && (
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-zinc-300">Produto</label>
+                <select
+                  value={selectedProductId}
+                  onChange={(e) => setSelectedProductId(e.target.value)}
+                  className="w-full px-3 py-2 bg-black/50 border border-white/10 rounded-lg text-white text-sm outline-none focus:border-emerald-500 transition-colors"
+                >
+                  {products.map((p) => (
+                    <option key={p.id} value={p.id} className="bg-zinc-900">
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-zinc-300">Quantidade</label>
@@ -115,14 +150,31 @@ export function MovementModal({ isOpen, onClose, type, productId, productName, o
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-zinc-300">Lote Controlado (Opcional)</label>
-                <input 
-                  type="text"
-                  value={batchId}
-                  onChange={(e) => setBatchId(e.target.value)}
-                  className="w-full px-3 py-2 bg-black/50 border border-white/5 rounded-lg text-white outline-none focus:border-emerald-500 transition-colors placeholder:text-zinc-600"
-                  placeholder="ID do Lote"
-                />
+                <label className="text-xs font-medium text-zinc-300">Lote Controlado</label>
+                {batches.length > 0 ? (
+                  <select
+                    value={batchId}
+                    onChange={(e) => setBatchId(e.target.value)}
+                    className="w-full px-3 py-2 bg-black/50 border border-white/5 rounded-lg text-white text-sm outline-none focus:border-emerald-500 transition-colors"
+                  >
+                    <option value="" className="bg-zinc-900">Sem lote específico</option>
+                    {batches
+                      .filter(b => !selectedProductId || b.productId === (productId || selectedProductId))
+                      .map(b => (
+                        <option key={b.id} value={b.id} className="bg-zinc-900">
+                          {b.batchNumber}
+                        </option>
+                      ))}
+                  </select>
+                ) : (
+                  <input 
+                    type="text"
+                    value={batchId}
+                    onChange={(e) => setBatchId(e.target.value)}
+                    className="w-full px-3 py-2 bg-black/50 border border-white/5 rounded-lg text-white outline-none focus:border-emerald-500 transition-colors placeholder:text-zinc-600"
+                    placeholder="ID do Lote (Opcional)"
+                  />
+                )}
               </div>
             </div>
 
