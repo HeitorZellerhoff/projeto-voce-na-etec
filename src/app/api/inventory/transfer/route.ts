@@ -11,7 +11,7 @@ const transferSchema = z.object({
   quantity: z.number().int().positive('A quantidade deve ser maior que zero'),
   reason: z.string().min(1, 'Motivo é obrigatório'),
   observation: z.string().optional(),
-  sectorId: z.string().uuid() // Injetado automaticamente pelo HOC (Origem)
+  sectorId: z.string().uuid().optional(),
 });
 
 export const POST = withPermission('STOCK_MANAGE', withSectorScoping(async (request, context, session) => {
@@ -19,9 +19,13 @@ export const POST = withPermission('STOCK_MANAGE', withSectorScoping(async (requ
     const body = await request.json();
     const result = transferSchema.safeParse(body);
 
-    if (!result.success) return NextResponse.json({ error: (result.error as any).errors[0].message }, { status: 400 });
+    if (!result.success) {
+      const errorMsg = result.error.issues?.[0]?.message || (result.error as any).errors?.[0]?.message || 'Dados inválidos';
+      return NextResponse.json({ error: errorMsg }, { status: 400 });
+    }
 
-    const { productId, batchId, destinationSectorId, quantity, reason, observation, sectorId: originSectorId } = result.data;
+    const { productId, batchId, destinationSectorId, quantity, reason, observation } = result.data;
+    const originSectorId = session.sectorId;
 
     if (originSectorId === destinationSectorId) {
       return NextResponse.json({ error: 'Setor de destino não pode ser o mesmo de origem' }, { status: 400 });

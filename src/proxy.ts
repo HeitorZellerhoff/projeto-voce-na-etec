@@ -63,51 +63,56 @@ export async function proxy(request: NextRequest) {
   }
 
   // Consulta ultrarrápida Edge-compatible via HTTP Driver para obter status de senha, código do setor e role
-  const sql = neon(process.env.DATABASE_URL!);
-  const result = await sql`
-    SELECT u."mustChangePassword", s."code" as "sectorCode", r."name" as "roleName"
-    FROM "User" u
-    JOIN "Sector" s ON u."sectorId" = s.id
-    JOIN "Role" r ON u."roleId" = r.id
-    WHERE u.id = ${session.sub}
-  `;
+  try {
+    const sql = neon(process.env.DATABASE_URL!);
+    const result = await sql`
+      SELECT u."mustChangePassword", s."code" as "sectorCode", r."name" as "roleName"
+      FROM "User" u
+      JOIN "Sector" s ON u."sectorId" = s.id
+      JOIN "Role" r ON u."roleId" = r.id
+      WHERE u.id = ${session.sub}
+    `;
 
-  if (result.length === 0) {
-    // Usuário não existe mais no banco
-    const response = NextResponse.redirect(new URL('/login', request.url));
-    response.cookies.delete('session');
-    return response;
-  }
-
-  const user = result[0];
-
-  // Restrição de Primeiro Acesso
-  if (user.mustChangePassword) {
-    if (pathname !== '/primeiro-acesso' && pathname !== '/api/auth/first-access') {
-      return NextResponse.redirect(new URL('/primeiro-acesso', request.url));
+    if (result.length === 0) {
+      // Usuário não existe mais no banco
+      const response = NextResponse.redirect(new URL('/login', request.url));
+      response.cookies.delete('session');
+      return response;
     }
-  }
 
-  // Prevenção de Cross-Sector (Guardião de Setor no Frontend)
-  if (pathname.startsWith('/dashboard/')) {
-    const requestedSector = pathname.split('/')[2]; // ex: /dashboard/compras -> compras
-    
-    if (requestedSector) {
-      const userSectorCode = user.sectorCode.toLowerCase();
-      const isAdmin = user.roleName === 'ADMINISTRADOR' || userSectorCode === 'administracao' || userSectorCode === 'admin';
+    const user = result[0];
 
-      // Administradores possuem visão executiva e acesso transversal aos painéis
-      if (!isAdmin) {
-        const isAdministrationPath = requestedSector === 'administracao' || requestedSector === 'admin';
-        const isUserInAdministration = userSectorCode === 'administracao' || userSectorCode === 'admin';
-        const isAllowed = (isAdministrationPath && isUserInAdministration) || (requestedSector === userSectorCode);
+    // Restrição de Primeiro Acesso
+    if (user.mustChangePassword) {
+      if (pathname !== '/primeiro-acesso' && pathname !== '/api/auth/first-access') {
+        return NextResponse.redirect(new URL('/primeiro-acesso', request.url));
+      }
+    }
 
-        // O usuário comum pode acessar apenas o próprio setor
-        if (!isAllowed) {
-          return NextResponse.redirect(new URL('/403-acesso-negado', request.url));
+    // Prevenção de Cross-Sector (Guardião de Setor no Frontend)
+    if (pathname.startsWith('/dashboard/')) {
+      const requestedSector = pathname.split('/')[2]; // ex: /dashboard/compras -> compras
+      
+      if (requestedSector) {
+        const userSectorCode = user.sectorCode.toLowerCase();
+        const isAdmin = user.roleName === 'ADMINISTRADOR' || userSectorCode === 'administracao' || userSectorCode === 'admin';
+
+        // Administradores possuem visão executiva e acesso transversal aos painéis
+        if (!isAdmin) {
+          const isAdministrationPath = requestedSector === 'administracao' || requestedSector === 'admin';
+          const isUserInAdministration = userSectorCode === 'administracao' || userSectorCode === 'admin';
+          const isAllowed = (isAdministrationPath && isUserInAdministration) || (requestedSector === userSectorCode);
+
+          // O usuário comum pode acessar apenas o próprio setor
+          if (!isAllowed) {
+            return NextResponse.redirect(new URL('/403-acesso-negado', request.url));
+          }
         }
       }
     }
+  } catch (error: any) {
+    // Evita derrubar a aplicação com 500 se houver instabilidade ou timeout de rede no Neon
+    console.warn('[PROXY WARN] Falha de conexão/timeout com Neon no proxy:', error.message || error);
   }
 
   const response = NextResponse.next();

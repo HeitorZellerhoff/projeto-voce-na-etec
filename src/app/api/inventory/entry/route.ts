@@ -10,7 +10,7 @@ const entrySchema = z.object({
   quantity: z.number().int().positive('A quantidade deve ser maior que zero'),
   reason: z.string().min(1, 'Motivo é obrigatório'),
   observation: z.string().optional(),
-  sectorId: z.string().uuid()
+  sectorId: z.string().uuid().optional(),
 });
 
 export const POST = withPermission('STOCK_MANAGE', withSectorScoping(async (request, context, session) => {
@@ -19,10 +19,12 @@ export const POST = withPermission('STOCK_MANAGE', withSectorScoping(async (requ
     const result = entrySchema.safeParse(body);
 
     if (!result.success) {
-      return NextResponse.json({ error: (result.error as any).errors[0].message }, { status: 400 });
+      const errorMsg = result.error.issues?.[0]?.message || (result.error as any).errors?.[0]?.message || 'Dados inválidos';
+      return NextResponse.json({ error: errorMsg }, { status: 400 });
     }
 
-    const { productId, batchId, quantity, reason, observation, sectorId } = result.data;
+    const { productId, batchId, quantity, reason, observation } = result.data;
+    const sectorId = session.sectorId;
 
     // Transação Atômica ACID
     const transactionResult = await prisma.$transaction(async (tx) => {
