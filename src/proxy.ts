@@ -62,12 +62,13 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url));
   }
 
-  // Consulta ultrarrápida Edge-compatible via HTTP Driver para obter status de senha e código do setor
+  // Consulta ultrarrápida Edge-compatible via HTTP Driver para obter status de senha, código do setor e role
   const sql = neon(process.env.DATABASE_URL!);
   const result = await sql`
-    SELECT u."mustChangePassword", s."code" as "sectorCode"
+    SELECT u."mustChangePassword", s."code" as "sectorCode", r."name" as "roleName"
     FROM "User" u
     JOIN "Sector" s ON u."sectorId" = s.id
+    JOIN "Role" r ON u."roleId" = r.id
     WHERE u.id = ${session.sub}
   `;
 
@@ -93,9 +94,18 @@ export async function proxy(request: NextRequest) {
     
     if (requestedSector) {
       const userSectorCode = user.sectorCode.toLowerCase();
-      // O usuário pode acessar apenas o próprio setor (Dashboard)
-      if (requestedSector !== userSectorCode) {
-        return NextResponse.redirect(new URL('/403-acesso-negado', request.url));
+      const isAdmin = user.roleName === 'ADMINISTRADOR' || userSectorCode === 'administracao' || userSectorCode === 'admin';
+
+      // Administradores possuem visão executiva e acesso transversal aos painéis
+      if (!isAdmin) {
+        const isAdministrationPath = requestedSector === 'administracao' || requestedSector === 'admin';
+        const isUserInAdministration = userSectorCode === 'administracao' || userSectorCode === 'admin';
+        const isAllowed = (isAdministrationPath && isUserInAdministration) || (requestedSector === userSectorCode);
+
+        // O usuário comum pode acessar apenas o próprio setor
+        if (!isAllowed) {
+          return NextResponse.redirect(new URL('/403-acesso-negado', request.url));
+        }
       }
     }
   }

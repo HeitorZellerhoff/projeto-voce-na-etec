@@ -2,7 +2,7 @@ import { ReactNode } from 'react';
 import { getSession } from '@/lib/auth/session';
 import { prisma } from '@/lib/prisma';
 import { redirect } from 'next/navigation';
-import { LayoutDashboard, Package, ShoppingCart, LogOut, FileText } from 'lucide-react';
+import { LayoutDashboard, Package, ShoppingCart, LogOut, FileText, Users, ShieldCheck, Layers } from 'lucide-react';
 import Link from 'next/link';
 
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
@@ -37,20 +37,28 @@ export default async function DashboardLayout({ children }: { children: ReactNod
           
           <Link href={`/dashboard/${sectorSlug}`} className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-emerald-500/10 text-emerald-400 font-medium hover:bg-emerald-500/20 transition-all border border-emerald-500/20">
             <Package className="w-4 h-4" />
-            Meu Setor
+            Meu Setor ({user.sector.name})
           </Link>
 
           {user.role.name === 'ADMINISTRADOR' && (
              <div className="pt-4 mt-4 border-t border-white/5 space-y-1.5">
-               <div className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3 px-2">Administração</div>
+               <div className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3 px-2">Gestão Corporativa</div>
+               <Link href={`/dashboard/administracao`} className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-zinc-400 font-medium hover:bg-white/5 hover:text-white transition-all">
+                 <ShieldCheck className="w-4 h-4 text-emerald-400" /> Painel Geral
+               </Link>
+               <Link href={`/dashboard/admin/usuarios`} className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-zinc-400 font-medium hover:bg-white/5 hover:text-white transition-all">
+                 <Users className="w-4 h-4 text-blue-400" /> Gestão IAM (Usuários)
+               </Link>
+
+               <div className="text-xs font-semibold text-zinc-500 uppercase tracking-wider pt-3 mb-2 px-2">Setores Operacionais</div>
                <Link href={`/dashboard/farmacia`} className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-zinc-400 font-medium hover:bg-white/5 hover:text-white transition-all">
-                 <Package className="w-4 h-4" /> Farmácia
+                 <Package className="w-4 h-4 text-purple-400" /> Farmácia Central
                </Link>
                <Link href={`/dashboard/almoxarifado`} className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-zinc-400 font-medium hover:bg-white/5 hover:text-white transition-all">
-                 <Package className="w-4 h-4" /> Almoxarifado
+                 <Layers className="w-4 h-4 text-cyan-400" /> Almoxarifado
                </Link>
                <Link href={`/dashboard/compras`} className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-zinc-400 font-medium hover:bg-white/5 hover:text-white transition-all">
-                 <ShoppingCart className="w-4 h-4" /> Compras
+                 <ShoppingCart className="w-4 h-4 text-amber-400" /> Compras
                </Link>
              </div>
           )}
