@@ -23,8 +23,34 @@ if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   
-  // Ignorar rotas públicas e arquivos estáticos
-  if (pathname.startsWith('/_next') || pathname === '/login' || pathname.startsWith('/api/auth/login')) {
+  // Tratamento para requisições POST em /login (reescreve internamente para a rota de API de autenticação)
+  if (pathname === '/login') {
+    if (request.method === 'POST') {
+      return NextResponse.rewrite(new URL('/api/auth/login', request.url));
+    }
+    return NextResponse.next();
+  }
+
+  // Ignorar rotas públicas, estáticos e endpoints de autenticação pública
+  if (pathname.startsWith('/_next') || pathname.startsWith('/api/auth/')) {
+    // Prevenção de Ataques de Força Bruta (Rate Limiting) via Vercel Edge e Upstash
+    if (pathname === '/api/auth/login' || pathname === '/api/auth/forgot-password') {
+      if (ratelimit) {
+        const ip = request.headers.get('x-forwarded-for') || '127.0.0.1';
+        const { success } = await ratelimit.limit(ip);
+        if (!success) {
+          return NextResponse.json(
+            { 
+              statusCode: 429, 
+              message: 'Muitas tentativas de acesso. Por favor, aguarde um minuto antes de tentar novamente.', 
+              timestamp: new Date().toISOString(), 
+              path: pathname 
+            },
+            { status: 429 }
+          );
+        }
+      }
+    }
     return NextResponse.next();
   }
 
@@ -33,33 +59,20 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Prevenção de Ataques de Força Bruta (Rate Limiting) via Vercel Edge e Upstash
-  if (pathname === '/api/auth/login' || pathname === '/api/auth/forgot-password') {
-    if (ratelimit) {
-      const ip = request.headers.get('x-forwarded-for') || '127.0.0.1';
-      const { success } = await ratelimit.limit(ip);
-      if (!success) {
-        return NextResponse.json(
-          { 
-            statusCode: 429, 
-            message: 'Muitas tentativas de acesso. Por favor, aguarde um minuto antes de tentar novamente.', 
-            timestamp: new Date().toISOString(), 
-            path: pathname 
-          },
-          { status: 429 }
-        );
-      }
-    }
-  }
-
   const sessionCookie = request.cookies.get('session')?.value;
   if (!sessionCookie) {
-    return NextResponse.redirect(new URL('/login', request.url));
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
+    }
+    return NextResponse.redirect(new URL('/login', request.url), 303);
   }
 
   const session = await verifyToken(sessionCookie);
   if (!session) {
-    return NextResponse.redirect(new URL('/login', request.url));
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json({ error: 'Sessão inválida ou expirada' }, { status: 401 });
+    }
+    return NextResponse.redirect(new URL('/login', request.url), 303);
   }
 
   // Consulta ultrarrápida Edge-compatible via HTTP Driver para obter status de senha, código do setor e role
@@ -75,7 +88,12 @@ export async function proxy(request: NextRequest) {
 
     if (result.length === 0) {
       // Usuário não existe mais no banco
-      const response = NextResponse.redirect(new URL('/login', request.url));
+      if (pathname.startsWith('/api/')) {
+        const response = NextResponse.json({ error: 'Usuário não encontrado' }, { status: 401 });
+        response.cookies.delete('session');
+        return response;
+      }
+      const response = NextResponse.redirect(new URL('/login', request.url), 303);
       response.cookies.delete('session');
       return response;
     }
@@ -85,7 +103,10 @@ export async function proxy(request: NextRequest) {
     // Restrição de Primeiro Acesso
     if (user.mustChangePassword) {
       if (pathname !== '/primeiro-acesso' && pathname !== '/api/auth/first-access') {
-        return NextResponse.redirect(new URL('/primeiro-acesso', request.url));
+        if (pathname.startsWith('/api/')) {
+          return NextResponse.json({ error: 'Alteração de senha obrigatória' }, { status: 403 });
+        }
+        return NextResponse.redirect(new URL('/primeiro-acesso', request.url), 303);
       }
     }
 
@@ -105,7 +126,7 @@ export async function proxy(request: NextRequest) {
 
           // O usuário comum pode acessar apenas o próprio setor
           if (!isAllowed) {
-            return NextResponse.redirect(new URL('/403-acesso-negado', request.url));
+            return NextResponse.redirect(new URL('/403-acesso-negado', request.url), 303);
           }
         }
       }
@@ -126,5 +147,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/api/:path*', '/dashboard/:path*', '/primeiro-acesso'],
+  matcher: ['/login', '/api/:path*', '/dashboard/:path*', '/primeiro-acesso'],
 };

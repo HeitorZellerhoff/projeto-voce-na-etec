@@ -11,12 +11,34 @@ const loginSchema = z.object({
 });
 
 export async function POST(request: Request) {
+  const acceptHeader = request.headers.get('accept') || '';
+  const isHtmlRequest = acceptHeader.includes('text/html');
+
   try {
-    const body = await request.json();
-    const result = loginSchema.safeParse(body);
+    let rawBody: any = {};
+    const contentType = request.headers.get('content-type') || '';
+
+    if (contentType.includes('application/json')) {
+      rawBody = await request.json();
+    } else if (contentType.includes('application/x-www-form-urlencoded') || contentType.includes('multipart/form-data')) {
+      const formData = await request.formData();
+      rawBody = Object.fromEntries(formData.entries());
+    } else {
+      try {
+        rawBody = await request.json();
+      } catch {
+        rawBody = {};
+      }
+    }
+
+    const result = loginSchema.safeParse(rawBody);
 
     if (!result.success) {
-      return NextResponse.json({ error: (result.error as any).errors[0].message }, { status: 400 });
+      const errorMsg = (result.error as any).errors?.[0]?.message || 'Dados inválidos';
+      if (isHtmlRequest) {
+        return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(errorMsg)}`, request.url), 303);
+      }
+      return NextResponse.json({ error: errorMsg }, { status: 400 });
     }
 
     const { email, password } = result.data;
@@ -26,15 +48,25 @@ export async function POST(request: Request) {
     });
 
     if (!user) {
+      if (isHtmlRequest) {
+        return NextResponse.redirect(new URL('/login?error=Credenciais%20inv%C3%A1lidas', request.url), 303);
+      }
       return NextResponse.json({ error: 'Credenciais inválidas' }, { status: 401 });
     }
 
     if (user.status !== UserStatus.ATIVO) {
-      return NextResponse.json({ error: `Acesso negado: Conta com status ${user.status}` }, { status: 403 });
+      const errorMsg = `Acesso negado: Conta com status ${user.status}`;
+      if (isHtmlRequest) {
+        return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(errorMsg)}`, request.url), 303);
+      }
+      return NextResponse.json({ error: errorMsg }, { status: 403 });
     }
 
     const isValid = await verifyPassword(password, user.passwordHash);
     if (!isValid) {
+      if (isHtmlRequest) {
+        return NextResponse.redirect(new URL('/login?error=Credenciais%20inv%C3%A1lidas', request.url), 303);
+      }
       return NextResponse.json({ error: 'Credenciais inválidas' }, { status: 401 });
     }
 
@@ -51,6 +83,11 @@ export async function POST(request: Request) {
       roleId: user.roleId,
     });
 
+    if (isHtmlRequest) {
+      const destination = user.mustChangePassword ? '/primeiro-acesso' : '/dashboard';
+      return NextResponse.redirect(new URL(destination, request.url), 303);
+    }
+
     return NextResponse.json({
       success: true,
       mustChangePassword: user.mustChangePassword,
@@ -64,6 +101,9 @@ export async function POST(request: Request) {
 
   } catch (error: any) {
     console.error('Login error:', error);
+    if (isHtmlRequest) {
+      return NextResponse.redirect(new URL('/login?error=Erro%20interno%20no%20servidor', request.url), 303);
+    }
     return NextResponse.json({ 
       error: 'Erro interno no servidor', 
       details: error?.message || String(error),

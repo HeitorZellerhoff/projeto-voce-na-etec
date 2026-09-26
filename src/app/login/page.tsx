@@ -10,7 +10,12 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return new URLSearchParams(window.location.search).get('error') || '';
+    }
+    return '';
+  });
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -63,10 +68,11 @@ export default function LoginPage() {
           </div>
         )}
 
-        <form onSubmit={handleLogin} className="space-y-5">
+        <form action="/api/auth/login" method="POST" onSubmit={handleLogin} className="space-y-5">
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-zinc-300">E-mail corporativo</label>
             <input 
+              name="email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -83,6 +89,7 @@ export default function LoginPage() {
             </div>
             <div className="relative">
               <input 
+                name="password"
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
