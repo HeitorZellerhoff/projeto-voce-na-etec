@@ -32,7 +32,7 @@ export const POST = withAuth(async (request, context, session) => {
           totalAmount,
           requestedByUserId: session.sub,
           items: {
-            create: items.map(i => ({
+            create: items.map((i: { productId: string; quantity: number; unitPrice: number }) => ({
               productId: i.productId,
               quantity: i.quantity,
               unitPrice: i.unitPrice

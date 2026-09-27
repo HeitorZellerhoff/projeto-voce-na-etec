@@ -12,10 +12,13 @@ import {
   Minus, 
   SlidersHorizontal,
   Layers,
-  CheckCircle2
+  CheckCircle2,
+  Send
 } from 'lucide-react';
 import { MovementModal } from '@/components/inventory/MovementModal';
 import { AdjustmentModal } from '@/components/inventory/AdjustmentModal';
+import { CreateRequestModal } from '@/components/requests/CreateRequestModal';
+import { RequestsListTable } from '@/components/requests/RequestsListTable';
 
 interface ProductItem {
   id: string;
@@ -56,6 +59,10 @@ interface Props {
   recentMovements: MovementItem[];
   products: ProductItem[];
   batches: BatchItem[];
+  outgoingRequests?: any[];
+  incomingRequests?: any[];
+  sectors?: any[];
+  currentSector?: any;
 }
 
 export function FarmaciaDashboardClient({
@@ -63,6 +70,10 @@ export function FarmaciaDashboardClient({
   recentMovements,
   products,
   batches,
+  outgoingRequests = [],
+  incomingRequests = [],
+  sectors = [],
+  currentSector,
 }: Props) {
   const router = useRouter();
 
@@ -88,6 +99,8 @@ export function FarmaciaDashboardClient({
     productName: '',
     previousBalance: 0,
   });
+
+  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
 
   // Métricas em tempo real
   const totalStockUnits = stocks.reduce((acc, s) => acc + s.quantity, 0);
@@ -115,6 +128,13 @@ export function FarmaciaDashboardClient({
           <p className="text-xs text-zinc-400 mt-0.5">Dispensação, controle de lotes e movimentações de fármacos</p>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => setIsRequestModalOpen(true)}
+            className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl font-medium text-sm transition-all shadow-lg shadow-cyan-500/20 flex items-center gap-2"
+          >
+            <Send className="w-4 h-4" />
+            Nova Solicitação
+          </button>
           <button
             onClick={() =>
               setMovementModalState({
@@ -377,7 +397,36 @@ export function FarmaciaDashboardClient({
         )}
       </div>
 
+      {/* Solicitações de Materiais */}
+      {currentSector && (
+        <div className="pt-2">
+          <div className="mb-3">
+            <h2 className="text-base font-bold text-white">Solicitações de Materiais da Farmácia</h2>
+            <p className="text-xs text-zinc-400">
+              Requisições enviadas ao Almoxarifado e pedidos recebidos de enfermarias e centros cirúrgicos
+            </p>
+          </div>
+          <RequestsListTable
+            currentSectorId={currentSector.id}
+            outgoingRequests={outgoingRequests}
+            incomingRequests={incomingRequests}
+            onRefresh={handleSuccess}
+          />
+        </div>
+      )}
+
       {/* Modais Integrados */}
+      {currentSector && sectors.length > 0 && (
+        <CreateRequestModal
+          isOpen={isRequestModalOpen}
+          onClose={() => setIsRequestModalOpen(false)}
+          currentSectorName={currentSector.name}
+          currentSectorId={currentSector.id}
+          availableSectors={sectors}
+          availableProducts={products as any}
+          onSuccess={handleSuccess}
+        />
+      )}
       <MovementModal
         isOpen={movementModalState.isOpen}
         onClose={() => setMovementModalState({ ...movementModalState, isOpen: false })}

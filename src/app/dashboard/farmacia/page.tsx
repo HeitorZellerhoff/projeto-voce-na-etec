@@ -15,11 +15,11 @@ export default async function FarmaciaDashboard() {
     return <div className="text-red-400 p-8">Setor Farmácia Central não configurado no banco.</div>;
   }
 
-  const [stocks, recentMovements, products, batches] = await Promise.all([
+  const [stocks, recentMovements, products, batches, outgoingRequests, incomingRequests, sectors] = await Promise.all([
     prisma.stock.findMany({
       where: { sectorId: farmSector.id },
       include: {
-        product: true,
+        product: { include: { category: true } },
         batch: true,
       },
       orderBy: { product: { name: 'asc' } },
@@ -40,6 +40,32 @@ export default async function FarmaciaDashboard() {
     prisma.productBatch.findMany({
       orderBy: { expirationDate: 'asc' },
     }),
+    prisma.sectorRequest.findMany({
+      where: { requestingSectorId: farmSector.id },
+      include: {
+        requestingSector: true,
+        supplyingSector: true,
+        requestedBy: true,
+        attendedBy: true,
+        items: { include: { product: true, batch: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.sectorRequest.findMany({
+      where: { supplyingSectorId: farmSector.id },
+      include: {
+        requestingSector: true,
+        supplyingSector: true,
+        requestedBy: true,
+        attendedBy: true,
+        items: { include: { product: true, batch: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.sector.findMany({
+      where: { status: 'ATIVO' },
+      orderBy: { name: 'asc' },
+    }),
   ]);
 
   return (
@@ -48,6 +74,10 @@ export default async function FarmaciaDashboard() {
       recentMovements={recentMovements as any}
       products={products as any}
       batches={batches as any}
+      outgoingRequests={outgoingRequests as any}
+      incomingRequests={incomingRequests as any}
+      sectors={sectors as any}
+      currentSector={farmSector}
     />
   );
 }

@@ -16,7 +16,7 @@ export type AuthenticatedRouteHandler = (
  */
 export function withAuth(handler: AuthenticatedRouteHandler): RouteHandler {
   return async (request: Request, context: any) => {
-    const session = await getSession();
+    const session = await getSession(request);
     if (!session) {
       return NextResponse.json({ error: 'Acesso bloqueado: Não autenticado' }, { status: 401 });
     }

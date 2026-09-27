@@ -56,6 +56,8 @@ export const POST = withPermission('STOCK_MANAGE', withSectorScoping(async (requ
         data: {
           productId,
           sectorId: originSectorId,
+          sourceSectorId: originSectorId,
+          destinationSectorId: destinationSectorId,
           batchId,
           type: MovementType.TRANSFERENCIA,
           quantity,
@@ -89,6 +91,8 @@ export const POST = withPermission('STOCK_MANAGE', withSectorScoping(async (requ
         data: {
           productId,
           sectorId: destinationSectorId,
+          sourceSectorId: originSectorId,
+          destinationSectorId: destinationSectorId,
           batchId,
           type: MovementType.TRANSFERENCIA,
           quantity,

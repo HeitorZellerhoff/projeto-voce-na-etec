@@ -1,7 +1,7 @@
 generator client {
-  provider        = "prisma-client-js"
-  engineType      = "library"
-  output          = "../src/generated/prisma"
+  provider   = "prisma-client-js"
+  engineType = "library"
+  output     = "../src/generated/prisma"
 }
 
 datasource db {
@@ -16,26 +16,28 @@ enum UserStatus {
 }
 
 model User {
-  id                String       @id @default(uuid()) @db.Uuid
-  name              String
-  registration      String       @unique
-  email             String       @unique
-  passwordHash      String
-  status            UserStatus
-  mustChangePassword Boolean     @default(true)
-  sectorId          String       @db.Uuid
-  roleId            String       @db.Uuid
-  lastLoginAt       DateTime?
-  passwordChangedAt DateTime?
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
+  id                 String               @id @default(uuid()) @db.Uuid
+  name               String
+  registration       String               @unique
+  email              String               @unique
+  passwordHash       String
+  status             UserStatus
+  mustChangePassword Boolean              @default(true)
+  sectorId           String               @db.Uuid
+  roleId             String               @db.Uuid
+  lastLoginAt        DateTime?
+  passwordChangedAt  DateTime?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
 
-  sector            Sector       @relation(fields: [sectorId], references: [id])
-  role              Role         @relation(fields: [roleId], references: [id])
-  movements         StockMovement[]
-  passwordResets    PasswordResetToken[]
-  purchasesRequested Purchase[]  @relation("PurchaseRequestedBy")
-  purchasesApproved  Purchase[]  @relation("PurchaseApprovedBy")
+  sector             Sector               @relation(fields: [sectorId], references: [id])
+  role               Role                 @relation(fields: [roleId], references: [id])
+  movements          StockMovement[]
+  passwordResets     PasswordResetToken[]
+  purchasesRequested Purchase[]           @relation("PurchaseRequestedBy")
+  purchasesApproved  Purchase[]           @relation("PurchaseApprovedBy")
+  requestsCreated    SectorRequest[]      @relation("RequestCreatedBy")
+  requestsAttended   SectorRequest[]      @relation("RequestAttendedBy")
 }
 
 enum SectorStatus {
@@ -44,19 +46,24 @@ enum SectorStatus {
 }
 
 model Sector {
-  id              String       @id @default(uuid()) @db.Uuid
-  name            String
-  code            String       @unique
-  description     String?
-  location        String?
-  responsibleName String?
-  status          SectorStatus
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
+  id                String            @id @default(uuid()) @db.Uuid
+  name              String
+  code              String            @unique
+  description       String?
+  location          String?
+  responsibleName   String?
+  status            SectorStatus
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
 
-  users           User[]
-  stocks          Stock[]
-  movements       StockMovement[]
+  users             User[]
+  stocks            Stock[]
+  movements         StockMovement[]
+  sourceMovements   StockMovement[]   @relation("MovementSourceSector")
+  destMovements     StockMovement[]   @relation("MovementDestSector")
+  outgoingRequests  SectorRequest[]   @relation("RequestingSector")
+  incomingRequests  SectorRequest[]   @relation("SupplyingSector")
+  allowedCategories SectorCategory[]
 }
 
 model Role {
@@ -80,8 +87,8 @@ model Permission {
 }
 
 model RolePermission {
-  roleId       String @db.Uuid
-  permissionId String @db.Uuid
+  roleId       String     @db.Uuid
+  permissionId String     @db.Uuid
 
   role         Role       @relation(fields: [roleId], references: [id])
   permission   Permission @relation(fields: [permissionId], references: [id])
@@ -90,12 +97,24 @@ model RolePermission {
 }
 
 model Category {
-  id          String    @id @default(uuid()) @db.Uuid
-  name        String
-  code        String    @unique
-  description String?
+  id               String           @id @default(uuid()) @db.Uuid
+  name             String
+  code             String           @unique
+  description      String?
 
-  products    Product[]
+  products         Product[]
+  sectorCategories SectorCategory[]
+}
+
+model SectorCategory {
+  sectorId   String   @db.Uuid
+  categoryId String   @db.Uuid
+  createdAt  DateTime @default(now())
+
+  sector     Sector   @relation(fields: [sectorId], references: [id], onDelete: Cascade)
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([sectorId, categoryId])
 }
 
 enum ProductStatus {
@@ -104,56 +123,62 @@ enum ProductStatus {
 }
 
 model Product {
-  id           String        @id @default(uuid()) @db.Uuid
-  code         String        @unique
-  name         String
-  description  String?
-  categoryId   String        @db.Uuid
-  unit         String
-  minimumStock Int
-  maximumStock Int
-  status       ProductStatus
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  id            String              @id @default(uuid()) @db.Uuid
+  code          String              @unique
+  name          String
+  description   String?
+  categoryId    String              @db.Uuid
+  unit          String
+  minimumStock  Int
+  maximumStock  Int
+  status        ProductStatus
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
 
-  category     Category      @relation(fields: [categoryId], references: [id])
-  batches      ProductBatch[]
-  stocks       Stock[]
-  movements    StockMovement[]
+  category      Category            @relation(fields: [categoryId], references: [id])
+  batches       ProductBatch[]
+  stocks        Stock[]
+  movements     StockMovement[]
   purchaseItems PurchaseItem[]
+  requestItems  SectorRequestItem[]
 }
 
 model ProductBatch {
-  id             String    @id @default(uuid()) @db.Uuid
-  productId      String    @db.Uuid
+  id             String              @id @default(uuid()) @db.Uuid
+  productId      String              @db.Uuid
   batchNumber    String
   expirationDate DateTime
   manufacturer   String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
 
-  product        Product   @relation(fields: [productId], references: [id])
+  product        Product             @relation(fields: [productId], references: [id])
   stocks         Stock[]
   movements      StockMovement[]
+  requestItems   SectorRequestItem[]
 
   @@index([batchNumber])
   @@index([expirationDate])
 }
 
 model Stock {
-  id        String  @id @default(uuid()) @db.Uuid
-  productId String  @db.Uuid
-  sectorId  String  @db.Uuid
-  batchId   String? @db.Uuid
-  quantity  Int     @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id              String        @id @default(uuid()) @db.Uuid
+  productId       String        @db.Uuid
+  sectorId        String        @db.Uuid
+  batchId         String?       @db.Uuid
+  quantity        Int           @default(0)
+  minimumQuantity Int?
+  maximumQuantity Int?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
 
-  product   Product       @relation(fields: [productId], references: [id])
-  sector    Sector        @relation(fields: [sectorId], references: [id])
-  batch     ProductBatch? @relation(fields: [batchId], references: [id])
+  product         Product       @relation(fields: [productId], references: [id])
+  sector          Sector        @relation(fields: [sectorId], references: [id])
+  batch           ProductBatch? @relation(fields: [batchId], references: [id])
 
   @@unique([productId, sectorId, batchId])
+  @@index([sectorId])
+  @@index([productId])
 }
 
 enum MovementType {
@@ -167,25 +192,84 @@ enum MovementType {
 }
 
 model StockMovement {
-  id              String       @id @default(uuid()) @db.Uuid
-  productId       String       @db.Uuid
-  sectorId        String       @db.Uuid
-  batchId         String?      @db.Uuid
-  type            MovementType
-  quantity        Int
-  previousBalance Int
-  newBalance      Int
-  reason          String
-  observation     String?
-  performedByUserId String     @db.Uuid
-  createdAt       DateTime     @default(now())
+  id                  String         @id @default(uuid()) @db.Uuid
+  productId           String         @db.Uuid
+  sectorId            String         @db.Uuid
+  sourceSectorId      String?        @db.Uuid
+  destinationSectorId String?        @db.Uuid
+  batchId             String?        @db.Uuid
+  type                MovementType
+  quantity            Int
+  previousBalance     Int
+  newBalance          Int
+  reason              String
+  observation         String?
+  performedByUserId   String         @db.Uuid
+  requestId           String?        @db.Uuid
+  createdAt           DateTime       @default(now())
 
-  product         Product       @relation(fields: [productId], references: [id])
-  sector          Sector        @relation(fields: [sectorId], references: [id])
-  batch           ProductBatch? @relation(fields: [batchId], references: [id])
-  performedBy     User          @relation(fields: [performedByUserId], references: [id])
+  product             Product        @relation(fields: [productId], references: [id])
+  sector              Sector         @relation(fields: [sectorId], references: [id])
+  sourceSector        Sector?        @relation("MovementSourceSector", fields: [sourceSectorId], references: [id])
+  destinationSector   Sector?        @relation("MovementDestSector", fields: [destinationSectorId], references: [id])
+  batch               ProductBatch?  @relation(fields: [batchId], references: [id])
+  performedBy         User           @relation(fields: [performedByUserId], references: [id])
+  request             SectorRequest? @relation(fields: [requestId], references: [id])
 
   @@index([sectorId, createdAt])
+  @@index([productId])
+  @@index([sourceSectorId])
+  @@index([destinationSectorId])
+  @@index([requestId])
+}
+
+enum RequestStatus {
+  PENDENTE
+  APROVADA
+  ATENDIDA
+  REJEITADA
+  CANCELADA
+}
+
+model SectorRequest {
+  id                 String              @id @default(uuid()) @db.Uuid
+  requestingSectorId String              @db.Uuid
+  supplyingSectorId  String              @db.Uuid
+  requestedByUserId  String              @db.Uuid
+  attendedByUserId   String?             @db.Uuid
+  status             RequestStatus       @default(PENDENTE)
+  observation        String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  requestingSector   Sector              @relation("RequestingSector", fields: [requestingSectorId], references: [id])
+  supplyingSector    Sector              @relation("SupplyingSector", fields: [supplyingSectorId], references: [id])
+  requestedBy        User                @relation("RequestCreatedBy", fields: [requestedByUserId], references: [id])
+  attendedBy         User?               @relation("RequestAttendedBy", fields: [attendedByUserId], references: [id])
+  items              SectorRequestItem[]
+  movements          StockMovement[]
+
+  @@index([requestingSectorId])
+  @@index([supplyingSectorId])
+  @@index([status])
+}
+
+model SectorRequestItem {
+  id                String        @id @default(uuid()) @db.Uuid
+  requestId         String        @db.Uuid
+  productId         String        @db.Uuid
+  batchId           String?       @db.Uuid
+  requestedQuantity Int
+  approvedQuantity  Int?
+  deliveredQuantity Int?          @default(0)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  request           SectorRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  product           Product       @relation(fields: [productId], references: [id])
+  batch             ProductBatch? @relation(fields: [batchId], references: [id])
+
+  @@index([requestId])
   @@index([productId])
 }
 
@@ -195,16 +279,16 @@ enum SupplierStatus {
 }
 
 model Supplier {
-  id          String         @id @default(uuid()) @db.Uuid
-  name        String
-  cnpj        String         @unique
-  email       String?
-  phone       String?
-  status      SupplierStatus
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  id        String         @id @default(uuid()) @db.Uuid
+  name      String
+  cnpj      String         @unique
+  email     String?
+  phone     String?
+  status    SupplierStatus
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
 
-  purchases   Purchase[]
+  purchases Purchase[]
 }
 
 enum PurchaseStatus {
@@ -259,11 +343,11 @@ model AuditLog {
 }
 
 model PasswordResetToken {
-  id         String    @id @default(uuid()) @db.Uuid
-  tokenHash  String
-  userId     String    @db.Uuid
-  expiresAt  DateTime
-  usedAt     DateTime?
+  id        String    @id @default(uuid()) @db.Uuid
+  tokenHash String
+  userId    String    @db.Uuid
+  expiresAt DateTime
+  usedAt    DateTime?
 
-  user       User      @relation(fields: [userId], references: [id])
+  user      User      @relation(fields: [userId], references: [id])
 }

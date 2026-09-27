@@ -15,11 +15,11 @@ export default async function AlmoxarifadoDashboard() {
     return <div className="text-red-400 p-8">Setor Almoxarifado Geral não configurado no banco.</div>;
   }
 
-  const [stocks, recentMovements, products, batches, sectors] = await Promise.all([
+  const [stocks, recentMovements, products, batches, sectors, outgoingRequests, incomingRequests] = await Promise.all([
     prisma.stock.findMany({
       where: { sectorId: almoxSector.id },
       include: {
-        product: true,
+        product: { include: { category: true } },
         batch: true,
       },
       orderBy: { product: { name: 'asc' } },
@@ -45,6 +45,28 @@ export default async function AlmoxarifadoDashboard() {
       where: { status: 'ATIVO' },
       orderBy: { name: 'asc' },
     }),
+    prisma.sectorRequest.findMany({
+      where: { requestingSectorId: almoxSector.id },
+      include: {
+        requestingSector: true,
+        supplyingSector: true,
+        requestedBy: true,
+        attendedBy: true,
+        items: { include: { product: true, batch: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.sectorRequest.findMany({
+      where: { supplyingSectorId: almoxSector.id },
+      include: {
+        requestingSector: true,
+        supplyingSector: true,
+        requestedBy: true,
+        attendedBy: true,
+        items: { include: { product: true, batch: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
   ]);
 
   return (
@@ -55,6 +77,9 @@ export default async function AlmoxarifadoDashboard() {
       batches={batches as any}
       sectors={sectors as any}
       almoxSectorId={almoxSector.id}
+      outgoingRequests={outgoingRequests as any}
+      incomingRequests={incomingRequests as any}
+      currentSector={almoxSector}
     />
   );
 }

@@ -57,6 +57,12 @@ export default async function DashboardLayout({ children }: { children: ReactNod
                <Link href={`/dashboard/almoxarifado`} className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-zinc-400 font-medium hover:bg-white/5 hover:text-white transition-all">
                  <Layers className="w-4 h-4 text-cyan-400" /> Almoxarifado
                </Link>
+               <Link href={`/dashboard/enfermaria`} className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-zinc-400 font-medium hover:bg-white/5 hover:text-white transition-all">
+                 <Package className="w-4 h-4 text-emerald-400" /> Enfermaria Geral
+               </Link>
+               <Link href={`/dashboard/centro_cirurgico`} className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-zinc-400 font-medium hover:bg-white/5 hover:text-white transition-all">
+                 <Package className="w-4 h-4 text-rose-400" /> Centro Cirúrgico
+               </Link>
                <Link href={`/dashboard/compras`} className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-zinc-400 font-medium hover:bg-white/5 hover:text-white transition-all">
                  <ShoppingCart className="w-4 h-4 text-amber-400" /> Compras
                </Link>
@@ -78,10 +84,16 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       <main className="flex-1 flex flex-col overflow-hidden relative bg-zinc-950">
         <div className="absolute top-0 left-0 w-full h-[500px] bg-emerald-900/10 blur-[120px] pointer-events-none -z-10"></div>
         
-        {/* Header Dinâmico (Badge) */}
+        {/* Header Dinâmico (Badge e Setor Atual em Evidência) */}
         <header className="h-16 flex items-center justify-between px-8 border-b border-white/5 bg-zinc-900/40 backdrop-blur-xl z-10 shadow-sm">
-          <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold text-zinc-300">Painel Operacional Automático</h2>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2.5 px-3.5 py-1.5 bg-emerald-500/10 border border-emerald-500/30 rounded-xl">
+              <span className="text-base">🏥</span>
+              <div className="flex flex-col">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 leading-none">SETOR ATUAL</span>
+                <span className="text-xs font-bold text-white leading-tight">{user.sector.name}</span>
+              </div>
+            </div>
           </div>
           
           <div className="flex items-center gap-4">
@@ -90,8 +102,6 @@ export default async function DashboardLayout({ children }: { children: ReactNod
               <span className="font-bold text-white tracking-wide">{user.name}</span>
               <span className="text-zinc-600">|</span>
               <span className="text-emerald-400 font-medium">{user.role.name}</span>
-              <span className="text-zinc-600">—</span>
-              <span className="text-zinc-400">Setor: <span className="text-white font-medium">{user.sector.name}</span></span>
             </div>
           </div>
         </header>

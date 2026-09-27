@@ -10,10 +10,13 @@ import {
   Plus, 
   Printer, 
   CheckCircle2, 
-  AlertTriangle 
+  AlertTriangle,
+  Send
 } from 'lucide-react';
 import { TransferModal } from '@/components/inventory/TransferModal';
 import { MovementModal } from '@/components/inventory/MovementModal';
+import { CreateRequestModal } from '@/components/requests/CreateRequestModal';
+import { RequestsListTable } from '@/components/requests/RequestsListTable';
 import { Product, ProductBatch, Sector } from '@/generated/prisma';
 
 interface StockItem {
@@ -42,6 +45,9 @@ interface Props {
   batches: ProductBatch[];
   sectors: Sector[];
   almoxSectorId: string;
+  outgoingRequests?: any[];
+  incomingRequests?: any[];
+  currentSector?: Sector;
 }
 
 export function AlmoxarifadoDashboardClient({
@@ -51,12 +57,16 @@ export function AlmoxarifadoDashboardClient({
   batches,
   sectors,
   almoxSectorId,
+  outgoingRequests = [],
+  incomingRequests = [],
+  currentSector,
 }: Props) {
   const router = useRouter();
 
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
   const [selectedProductId, setSelectedProductId] = useState<string | undefined>(undefined);
   const [isEntryModalOpen, setIsEntryModalOpen] = useState(false);
+  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
 
   const totalStored = stocks.reduce((acc, s) => acc + s.quantity, 0);
   const transferCount = recentMovements.filter(m => m.type === 'TRANSFERENCIA').length;
@@ -87,8 +97,15 @@ export function AlmoxarifadoDashboardClient({
             Imprimir Relatório
           </button>
           <button
-            onClick={() => setIsEntryModalOpen(true)}
+            onClick={() => setIsRequestModalOpen(true)}
             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-medium text-sm transition-all shadow-lg shadow-emerald-500/20 flex items-center gap-2"
+          >
+            <Send className="w-4 h-4" />
+            Nova Solicitação
+          </button>
+          <button
+            onClick={() => setIsEntryModalOpen(true)}
+            className="px-4 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl font-medium text-sm transition-all shadow-lg shadow-emerald-700/20 flex items-center gap-2"
           >
             <Plus className="w-4 h-4" />
             Receber Carga
@@ -276,7 +293,34 @@ export function AlmoxarifadoDashboardClient({
         )}
       </div>
 
+      {/* Solicitações de Materiais do Almoxarifado */}
+      <div className="pt-2">
+        <div className="mb-3">
+          <h2 className="text-base font-bold text-white">Solicitações de Materiais do Almoxarifado</h2>
+          <p className="text-xs text-zinc-400">
+            Atendimento de requisições de outros setores (Enfermaria, Farmácia, Centro Cirúrgico) e pedidos emitidos
+          </p>
+        </div>
+        <RequestsListTable
+          currentSectorId={almoxSectorId}
+          outgoingRequests={outgoingRequests}
+          incomingRequests={incomingRequests}
+          onRefresh={handleSuccess}
+        />
+      </div>
+
       {/* Modais */}
+      {currentSector && (
+        <CreateRequestModal
+          isOpen={isRequestModalOpen}
+          onClose={() => setIsRequestModalOpen(false)}
+          currentSectorName={currentSector.name}
+          currentSectorId={almoxSectorId}
+          availableSectors={sectors}
+          availableProducts={products}
+          onSuccess={handleSuccess}
+        />
+      )}
       <TransferModal
         isOpen={isTransferModalOpen}
         onClose={() => setIsTransferModalOpen(false)}
