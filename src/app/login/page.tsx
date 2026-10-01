@@ -2,7 +2,9 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { Eye, EyeOff, Loader2, Hospital } from 'lucide-react';
+
 
 export default function LoginPage() {
   const router = useRouter();
@@ -85,7 +87,9 @@ export default function LoginPage() {
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <label className="text-sm font-medium text-zinc-300">Senha</label>
-              <button type="button" className="text-xs text-emerald-400 hover:text-emerald-300 transition-colors">Esqueceu a senha?</button>
+              <Link href="/esqueci-minha-senha" className="text-xs text-emerald-400 hover:text-emerald-300 transition-colors">
+                Esqueceu a senha?
+              </Link>
             </div>
             <div className="relative">
               <input 

@@ -21,7 +21,7 @@ export function UsersManagementClient({ initialUsers, sectors, roles }: Props) {
   const [statusFilter, setStatusFilter] = useState('');
 
   // Modals state
-  const [userToBlock, setUserToBlock] = useState<UserWithRelations | null>(null);
+  const [userToToggle, setUserToToggle] = useState<{ user: UserWithRelations; action: 'BLOCK' | 'UNBLOCK' } | null>(null);
   const [isRegisterModalOpen, setIsRegisterModalOpen] = useState(false);
 
   // Filtros aplicados localmente
@@ -32,18 +32,23 @@ export function UsersManagementClient({ initialUsers, sectors, roles }: Props) {
     return matchSearch && matchSector && matchStatus;
   });
 
-  const handleBlockUser = async () => {
-    if (!userToBlock) return;
+  const handleToggleUserStatus = async () => {
+    if (!userToToggle) return;
     try {
-      const res = await fetch(`/api/admin/users/${userToBlock.id}/block`, { method: 'POST' });
-      if (!res.ok) throw new Error('Falha ao bloquear usuário');
+      const res = await fetch(`/api/admin/users/${userToToggle.user.id}/block`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: userToToggle.action }),
+      });
+      if (!res.ok) throw new Error('Falha ao alterar status do usuário');
       
-      setUsers(users.map(u => u.id === userToBlock.id ? { ...u, status: 'BLOQUEADO' } : u));
+      const newStatus = userToToggle.action === 'UNBLOCK' ? 'ATIVO' : 'BLOQUEADO';
+      setUsers(users.map(u => u.id === userToToggle.user.id ? { ...u, status: newStatus } : u));
     } catch (err) {
       console.error(err);
-      alert('Erro ao bloquear o usuário.');
+      alert('Erro ao atualizar status do colaborador.');
     } finally {
-      setUserToBlock(null);
+      setUserToToggle(null);
     }
   };
 
@@ -129,9 +134,16 @@ export function UsersManagementClient({ initialUsers, sectors, roles }: Props) {
                     )}
                   </td>
                   <td className="px-6 py-4 text-right">
-                    {user.status !== 'BLOQUEADO' && (
+                    {user.status === 'BLOQUEADO' ? (
                       <button 
-                        onClick={() => setUserToBlock(user)}
+                        onClick={() => setUserToToggle({ user, action: 'UNBLOCK' })}
+                        className="text-emerald-400 hover:text-emerald-300 font-medium text-xs transition-colors"
+                      >
+                        Reativar / Desbloquear
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={() => setUserToToggle({ user, action: 'BLOCK' })}
                         className="text-red-400 hover:text-red-300 font-medium text-xs transition-colors"
                       >
                         Bloquear Acesso
@@ -154,13 +166,19 @@ export function UsersManagementClient({ initialUsers, sectors, roles }: Props) {
       />
 
       <ConfirmActionModal 
-        isOpen={!!userToBlock}
-        onClose={() => setUserToBlock(null)}
-        onConfirm={handleBlockUser}
-        title="Revogar Acesso do Colaborador"
-        description={<>Você está prestes a bloquear o acesso de <strong>{userToBlock?.name}</strong> ao Sistema Hospitalar. Isso encerrará instantaneamente a sessão ativa do usuário.</>}
-        confirmText="Bloquear Acesso (Imediato)"
-        isDestructive={true}
+        isOpen={!!userToToggle}
+        onClose={() => setUserToToggle(null)}
+        onConfirm={handleToggleUserStatus}
+        title={userToToggle?.action === 'UNBLOCK' ? "Reativar Acesso do Colaborador" : "Revogar Acesso do Colaborador"}
+        description={
+          userToToggle?.action === 'UNBLOCK' ? (
+            <>Você está prestes a reativar o acesso de <strong>{userToToggle?.user.name}</strong> ao Sistema Hospitalar.</>
+          ) : (
+            <>Você está prestes a bloquear o acesso de <strong>{userToToggle?.user.name}</strong> ao Sistema Hospitalar. A sessão do usuário será imediatamente revogada.</>
+          )
+        }
+        confirmText={userToToggle?.action === 'UNBLOCK' ? "Reativar Acesso" : "Bloquear Acesso (Imediato)"}
+        isDestructive={userToToggle?.action === 'BLOCK'}
       />
     </div>
   );

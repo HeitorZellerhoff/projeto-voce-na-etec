@@ -27,7 +27,7 @@ export const POST = withPermission('STOCK_MANAGE', withSectorScoping(async (requ
     const sectorId = session.sectorId;
 
     const transactionResult = await prisma.$transaction(async (tx) => {
-      // Locking the row for update na lógica de negócios
+      // 1. Busca o estoque atual para validar existência e capturar saldo anterior
       const stock = await tx.stock.findUnique({
         where: {
           productId_sectorId_batchId: {
@@ -38,14 +38,28 @@ export const POST = withPermission('STOCK_MANAGE', withSectorScoping(async (requ
         }
       });
 
-      // Validação Crítica de Negócio: Saldo nunca pode ser negativo
+      // Validação Prévia de Negócio
       if (!stock || stock.quantity < quantity) {
         throw new Error('INSUFFICIENT_FUNDS');
       }
 
-      const updatedStock = await tx.stock.update({
-        where: { id: stock.id },
-        data: { quantity: { decrement: quantity } }
+      // 2. Decremento Atômico: Impede Race Condition com a cláusula quantity >= quantity
+      const updateResult = await tx.stock.updateMany({
+        where: {
+          id: stock.id,
+          quantity: { gte: quantity }
+        },
+        data: {
+          quantity: { decrement: quantity }
+        }
+      });
+
+      if (updateResult.count === 0) {
+        throw new Error('INSUFFICIENT_FUNDS');
+      }
+
+      const updatedStock = await tx.stock.findUniqueOrThrow({
+        where: { id: stock.id }
       });
 
       const movement = await tx.stockMovement.create({

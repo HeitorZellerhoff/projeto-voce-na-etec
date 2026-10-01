@@ -75,11 +75,11 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url), 303);
   }
 
-  // Consulta ultrarrápida Edge-compatible via HTTP Driver para obter status de senha, código do setor e role
+  // Consulta ultrarrápida Edge-compatible via HTTP Driver para obter status de senha, código do setor, role e status da conta
   try {
     const sql = neon(process.env.DATABASE_URL!);
     const result = await sql`
-      SELECT u."mustChangePassword", s."code" as "sectorCode", r."name" as "roleName"
+      SELECT u."status", u."mustChangePassword", s."code" as "sectorCode", r."name" as "roleName"
       FROM "User" u
       JOIN "Sector" s ON u."sectorId" = s.id
       JOIN "Role" r ON u."roleId" = r.id
@@ -99,6 +99,21 @@ export async function proxy(request: NextRequest) {
     }
 
     const user = result[0];
+
+    // Validação de Conta Ativa (Bloqueio em tempo real de sessões ativas)
+    if (user.status !== 'ATIVO') {
+      if (pathname.startsWith('/api/')) {
+        const response = NextResponse.json(
+          { error: `Acesso negado: Conta de colaborador com status ${user.status}` },
+          { status: 403 }
+        );
+        response.cookies.delete('session');
+        return response;
+      }
+      const response = NextResponse.redirect(new URL('/login?error=Conta%20bloqueada%20ou%20inativa', request.url), 303);
+      response.cookies.delete('session');
+      return response;
+    }
 
     // Restrição de Primeiro Acesso
     if (user.mustChangePassword) {
@@ -132,8 +147,11 @@ export async function proxy(request: NextRequest) {
       }
     }
   } catch (error: any) {
-    // Evita derrubar a aplicação com 500 se houver instabilidade ou timeout de rede no Neon
     console.warn('[PROXY WARN] Falha de conexão/timeout com Neon no proxy:', error.message || error);
+    // Em caso de falha de conexão no banco no proxy, se for rota de API protegida, retorna erro 503
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json({ error: 'Serviço de autenticação temporariamente indisponível' }, { status: 503 });
+    }
   }
 
   const response = NextResponse.next();

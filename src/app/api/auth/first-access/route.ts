@@ -4,13 +4,14 @@ import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/auth/session';
 import { hashPassword } from '@/lib/auth/crypto';
 
+
 const firstAccessSchema = z.object({
   newPassword: z.string().min(8, 'A nova senha deve ter no mínimo 8 caracteres'),
 });
 
 export async function POST(request: Request) {
   try {
-    const session = await getSession();
+    const session = await getSession(request);
     if (!session) {
       return NextResponse.json({ error: 'Sessão inválida ou não autenticado' }, { status: 401 });
     }
@@ -32,13 +33,26 @@ export async function POST(request: Request) {
 
     const newPasswordHash = await hashPassword(result.data.newPassword);
 
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        passwordHash: newPasswordHash,
-        mustChangePassword: false,
-        passwordChangedAt: new Date(),
-      },
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: user.id },
+        data: {
+          passwordHash: newPasswordHash,
+          mustChangePassword: false,
+          passwordChangedAt: new Date(),
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId: user.id,
+          sectorId: user.sectorId,
+          action: 'AUTH_FIRST_ACCESS_PASSWORD_CHANGE',
+          entity: 'User',
+          entityId: user.id,
+          metadata: { email: user.email },
+        }
+      });
     });
 
     return NextResponse.json({ success: true, message: 'Senha alterada com sucesso' });
@@ -48,3 +62,4 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Erro interno no servidor' }, { status: 500 });
   }
 }
+

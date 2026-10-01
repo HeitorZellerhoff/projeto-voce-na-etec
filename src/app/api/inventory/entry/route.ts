@@ -26,8 +26,41 @@ export const POST = withPermission('STOCK_MANAGE', withSectorScoping(async (requ
     const { productId, batchId, quantity, reason, observation } = result.data;
     const sectorId = session.sectorId;
 
+    // Validar existência do produto e compatibilidade de categoria com o setor (DEM-011)
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+      select: { id: true, name: true, categoryId: true }
+    });
+
+    if (!product) {
+      return NextResponse.json({ error: 'Produto não encontrado' }, { status: 404 });
+    }
+
+    const sectorCategoriesCount = await prisma.sectorCategory.count({
+      where: { sectorId }
+    });
+
+    if (sectorCategoriesCount > 0) {
+      const isAllowed = await prisma.sectorCategory.findUnique({
+        where: {
+          sectorId_categoryId: {
+            sectorId,
+            categoryId: product.categoryId,
+          }
+        }
+      });
+
+      if (!isAllowed) {
+        return NextResponse.json(
+          { error: 'Incompatibilidade: O produto pertence a uma categoria não autorizada para este setor' },
+          { status: 400 }
+        );
+      }
+    }
+
     // Transação Atômica ACID
     const transactionResult = await prisma.$transaction(async (tx) => {
+
       // 1. Busca ou Cria o registro de Estoque para o setor e lote
       const stock = await tx.stock.upsert({
         where: {

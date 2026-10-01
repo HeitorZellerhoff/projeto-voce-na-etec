@@ -52,9 +52,25 @@ export const POST = withAuth(async (request, context, session) => {
       );
     }
 
-    // TRANSAÇÃO ATÔMICA ACID COM ISOLAMENTO DE ESTOQUE
+    // TRANSAÇÃO ATÔMICA ACID COM ISOLAMENTO DE ESTOQUE E PREVENÇÃO DE DUPLO ATENDIMENTO
     const updatedResult = await prisma.$transaction(async (tx) => {
-      // 1. Validar e movimentar cada item da solicitação
+      // 1. Transição Atômica de Status: Bloqueia Duplo Atendimento Concorrente
+      const updateRequestResult = await tx.sectorRequest.updateMany({
+        where: {
+          id: sectorRequest.id,
+          status: { in: [RequestStatus.PENDENTE, RequestStatus.APROVADA] }
+        },
+        data: {
+          status: RequestStatus.ATENDIDA,
+          attendedByUserId: session.sub,
+        }
+      });
+
+      if (updateRequestResult.count === 0) {
+        throw new Error('REQUEST_ALREADY_PROCESSED');
+      }
+
+      // 2. Validar e movimentar cada item da solicitação de forma atômica
       for (const item of sectorRequest.items) {
         const requiredQty = item.requestedQuantity;
 
@@ -73,13 +89,24 @@ export const POST = withAuth(async (request, context, session) => {
           throw new Error(`INSUFFICIENT_STOCK:${item.product.name}`);
         }
 
-        // 1.1 Decrementar estoque no setor fornecedor
-        const updatedSupplyingStock = await tx.stock.update({
-          where: { id: supplyingStock.id },
+        // 2.1 Decrementar estoque no setor fornecedor de forma atômica
+        const updateSupplyingResult = await tx.stock.updateMany({
+          where: {
+            id: supplyingStock.id,
+            quantity: { gte: requiredQty }
+          },
           data: { quantity: { decrement: requiredQty } }
         });
 
-        // 1.2 Incrementar estoque no setor solicitante
+        if (updateSupplyingResult.count === 0) {
+          throw new Error(`INSUFFICIENT_STOCK:${item.product.name}`);
+        }
+
+        const updatedSupplyingStock = await tx.stock.findUniqueOrThrow({
+          where: { id: supplyingStock.id }
+        });
+
+        // 2.2 Incrementar estoque no setor solicitante
         const updatedRequestingStock = await tx.stock.upsert({
           where: {
             productId_sectorId_batchId: {
@@ -97,7 +124,7 @@ export const POST = withAuth(async (request, context, session) => {
           }
         });
 
-        // 1.3 Movimentação de Saída no Fornecedor (com origem e destino explícitos)
+        // 2.3 Movimentação de Saída no Fornecedor (com origem e destino explícitos)
         await tx.stockMovement.create({
           data: {
             productId: item.productId,
@@ -116,7 +143,7 @@ export const POST = withAuth(async (request, context, session) => {
           }
         });
 
-        // 1.4 Movimentação de Entrada no Solicitante (com origem e destino explícitos)
+        // 2.4 Movimentação de Entrada no Solicitante (com origem e destino explícitos)
         await tx.stockMovement.create({
           data: {
             productId: item.productId,
@@ -135,7 +162,7 @@ export const POST = withAuth(async (request, context, session) => {
           }
         });
 
-        // 1.5 Atualizar item da solicitação
+        // 2.5 Atualizar item da solicitação
         await tx.sectorRequestItem.update({
           where: { id: item.id },
           data: {
@@ -145,13 +172,9 @@ export const POST = withAuth(async (request, context, session) => {
         });
       }
 
-      // 2. Atualizar status da solicitação
-      const updatedReq = await tx.sectorRequest.update({
+      // 3. Buscar a solicitação atualizada completa para retorno
+      const finalReq = await tx.sectorRequest.findUniqueOrThrow({
         where: { id: sectorRequest.id },
-        data: {
-          status: RequestStatus.ATENDIDA,
-          attendedByUserId: session.sub,
-        },
         include: {
           items: { include: { product: true } },
           requestingSector: true,
@@ -159,7 +182,7 @@ export const POST = withAuth(async (request, context, session) => {
         }
       });
 
-      // 3. Log de Auditoria
+      // 4. Log de Auditoria
       await tx.auditLog.create({
         data: {
           userId: session.sub,
@@ -175,7 +198,7 @@ export const POST = withAuth(async (request, context, session) => {
         }
       });
 
-      return updatedReq;
+      return finalReq;
     });
 
     return NextResponse.json({
@@ -185,6 +208,11 @@ export const POST = withAuth(async (request, context, session) => {
     });
 
   } catch (error: any) {
+    if (error.message === 'REQUEST_ALREADY_PROCESSED') {
+      return NextResponse.json({
+        error: 'Esta solicitação já foi atendida ou processada anteriormente'
+      }, { status: 409 });
+    }
     if (error.message?.startsWith('INSUFFICIENT_STOCK:')) {
       const productName = error.message.replace('INSUFFICIENT_STOCK:', '');
       return NextResponse.json({

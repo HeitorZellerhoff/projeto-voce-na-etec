@@ -29,10 +29,22 @@ export function withAuth(handler: AuthenticatedRouteHandler): RouteHandler {
  */
 export function withPermission(permissionAction: string, handler: AuthenticatedRouteHandler): RouteHandler {
   return withAuth(async (request: Request, context: any, session: TokenPayload) => {
-    
+    // Validação em tempo real de status ativo e papel do usuário
+    const user = await prisma.user.findUnique({
+      where: { id: session.sub },
+      select: { status: true, roleId: true }
+    });
+
+    if (!user || user.status !== 'ATIVO') {
+      return NextResponse.json(
+        { error: 'Acesso negado: Conta inativa ou bloqueada' },
+        { status: 403 }
+      );
+    }
+
     const rolePermission = await prisma.rolePermission.findFirst({
       where: {
-        roleId: session.roleId,
+        roleId: user.roleId,
         permission: { action: permissionAction }
       }
     });

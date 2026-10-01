@@ -3,7 +3,9 @@ import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { verifyPassword } from '@/lib/auth/crypto';
 import { createSession } from '@/lib/auth/session';
+import { logAuditAction } from '@/lib/audit';
 import { UserStatus } from '@/generated/prisma';
+
 
 const loginSchema = z.object({
   email: z.string().email('Formato de e-mail inválido'),
@@ -48,6 +50,26 @@ export async function POST(request: Request) {
     });
 
     if (!user) {
+      await logAuditAction({
+        action: 'AUTH_LOGIN_FAILED',
+        entity: 'User',
+        metadata: { email, reason: 'Credenciais inválidas' },
+        req: request,
+      });
+      if (isHtmlRequest) {
+        return NextResponse.redirect(new URL('/login?error=Credenciais%20inv%C3%A1lidas', request.url), 303);
+      }
+      return NextResponse.json({ error: 'Credenciais inválidas' }, { status: 401 });
+    }
+
+    const isValid = await verifyPassword(password, user.passwordHash);
+    if (!isValid) {
+      await logAuditAction({
+        action: 'AUTH_LOGIN_FAILED',
+        entity: 'User',
+        metadata: { email, reason: 'Credenciais inválidas' },
+        req: request,
+      });
       if (isHtmlRequest) {
         return NextResponse.redirect(new URL('/login?error=Credenciais%20inv%C3%A1lidas', request.url), 303);
       }
@@ -55,6 +77,15 @@ export async function POST(request: Request) {
     }
 
     if (user.status !== UserStatus.ATIVO) {
+      await logAuditAction({
+        userId: user.id,
+        sectorId: user.sectorId,
+        action: 'AUTH_LOGIN_BLOCKED',
+        entity: 'User',
+        entityId: user.id,
+        metadata: { email, status: user.status },
+        req: request,
+      });
       const errorMsg = `Acesso negado: Conta com status ${user.status}`;
       if (isHtmlRequest) {
         return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(errorMsg)}`, request.url), 303);
@@ -62,18 +93,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: errorMsg }, { status: 403 });
     }
 
-    const isValid = await verifyPassword(password, user.passwordHash);
-    if (!isValid) {
-      if (isHtmlRequest) {
-        return NextResponse.redirect(new URL('/login?error=Credenciais%20inv%C3%A1lidas', request.url), 303);
-      }
-      return NextResponse.json({ error: 'Credenciais inválidas' }, { status: 401 });
-    }
-
     // Atualiza o timestamp do último login
     await prisma.user.update({
       where: { id: user.id },
       data: { lastLoginAt: new Date() }
+    });
+
+    // Registra auditoria de sucesso
+    await logAuditAction({
+      userId: user.id,
+      sectorId: user.sectorId,
+      action: 'AUTH_LOGIN_SUCCESS',
+      entity: 'User',
+      entityId: user.id,
+      metadata: { email: user.email, name: user.name },
+      req: request,
     });
 
     // Cria o cookie de sessão seguro
@@ -105,9 +139,7 @@ export async function POST(request: Request) {
       return NextResponse.redirect(new URL('/login?error=Erro%20interno%20no%20servidor', request.url), 303);
     }
     return NextResponse.json({ 
-      error: 'Erro interno no servidor', 
-      details: error?.message || String(error),
-      stack: error?.stack 
+      error: 'Erro interno no servidor' 
     }, { status: 500 });
   }
 }

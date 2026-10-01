@@ -1,7 +1,20 @@
 import { NextResponse } from 'next/server';
-import { destroySession } from '@/lib/auth/session';
+import { getSession, destroySession } from '@/lib/auth/session';
+import { logAuditAction } from '@/lib/audit';
 
 export async function POST(request: Request) {
+  const session = await getSession(request);
+  if (session?.sub) {
+    await logAuditAction({
+      userId: session.sub,
+      sectorId: session.sectorId,
+      action: 'AUTH_LOGOUT',
+      entity: 'USER',
+      entityId: session.sub,
+      req: request,
+    });
+  }
+
   await destroySession();
   const acceptHeader = request.headers.get('accept') || '';
   if (acceptHeader.includes('text/html')) {
@@ -11,6 +24,19 @@ export async function POST(request: Request) {
 }
 
 export async function GET(request: Request) {
+  const session = await getSession(request);
+  if (session?.sub) {
+    await logAuditAction({
+      userId: session.sub,
+      sectorId: session.sectorId,
+      action: 'AUTH_LOGOUT',
+      entity: 'USER',
+      entityId: session.sub,
+      req: request,
+    });
+  }
+
   await destroySession();
   return NextResponse.redirect(new URL('/login', request.url), 303);
 }
+

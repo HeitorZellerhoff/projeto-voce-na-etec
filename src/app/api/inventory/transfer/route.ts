@@ -31,8 +31,50 @@ export const POST = withPermission('STOCK_MANAGE', withSectorScoping(async (requ
       return NextResponse.json({ error: 'Setor de destino não pode ser o mesmo de origem' }, { status: 400 });
     }
 
+    // Validar existência e status ativo do setor de destino
+    const destinationSector = await prisma.sector.findUnique({
+      where: { id: destinationSectorId }
+    });
+
+    if (!destinationSector || destinationSector.status !== 'ATIVO') {
+      return NextResponse.json({ error: 'Setor de destino inexistente ou inativo' }, { status: 404 });
+    }
+
+    // Validar compatibilidade de Categoria do Produto com o Setor de Destino (DEM-011)
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+      select: { id: true, name: true, categoryId: true }
+    });
+
+    if (!product) {
+      return NextResponse.json({ error: 'Produto não encontrado' }, { status: 404 });
+    }
+
+    const sectorCategoriesCount = await prisma.sectorCategory.count({
+      where: { sectorId: destinationSectorId }
+    });
+
+    if (sectorCategoriesCount > 0) {
+      const isAllowed = await prisma.sectorCategory.findUnique({
+        where: {
+          sectorId_categoryId: {
+            sectorId: destinationSectorId,
+            categoryId: product.categoryId,
+          }
+        }
+      });
+
+      if (!isAllowed) {
+        return NextResponse.json(
+          { error: 'Incompatibilidade: O produto pertence a uma categoria não permitida no setor de destino' },
+          { status: 400 }
+        );
+      }
+    }
+
+
     const transactionResult = await prisma.$transaction(async (tx) => {
-      // 1. Validar Estoque na Origem
+      // 1. Validar e Decrementar Estoque na Origem de forma Atômica
       const originStock = await tx.stock.findUnique({
         where: {
           productId_sectorId_batchId: {
@@ -47,9 +89,22 @@ export const POST = withPermission('STOCK_MANAGE', withSectorScoping(async (requ
         throw new Error('INSUFFICIENT_FUNDS');
       }
 
-      const updatedOriginStock = await tx.stock.update({
-        where: { id: originStock.id },
-        data: { quantity: { decrement: quantity } }
+      const updateOriginResult = await tx.stock.updateMany({
+        where: {
+          id: originStock.id,
+          quantity: { gte: quantity }
+        },
+        data: {
+          quantity: { decrement: quantity }
+        }
+      });
+
+      if (updateOriginResult.count === 0) {
+        throw new Error('INSUFFICIENT_FUNDS');
+      }
+
+      const updatedOriginStock = await tx.stock.findUniqueOrThrow({
+        where: { id: originStock.id }
       });
 
       const originMovement = await tx.stockMovement.create({
@@ -64,7 +119,7 @@ export const POST = withPermission('STOCK_MANAGE', withSectorScoping(async (requ
           previousBalance: originStock.quantity,
           newBalance: updatedOriginStock.quantity,
           reason,
-          observation: `Transferência para o setor ${destinationSectorId}. ` + (observation || ''),
+          observation: `Transferência para o setor ${destinationSector.name}. ` + (observation || ''),
           performedByUserId: session.sub,
         }
       });
@@ -99,8 +154,8 @@ export const POST = withPermission('STOCK_MANAGE', withSectorScoping(async (requ
           previousBalance: updatedDestinationStock.quantity - quantity,
           newBalance: updatedDestinationStock.quantity,
           reason,
-          observation: `Transferência recebida do setor ${originSectorId}. ` + (observation || ''),
-          performedByUserId: session.sub, // Autoria permanece de quem iniciou a transferência
+          observation: `Transferência recebida do setor de origem. ` + (observation || ''),
+          performedByUserId: session.sub,
         }
       });
 

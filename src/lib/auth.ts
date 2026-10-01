@@ -1,24 +1,25 @@
 import { prisma } from './prisma';
-import { getSession } from './jwt';
+import { getSession } from './auth/session';
 
-export * from './jwt';
+export * from './auth/jwt';
+export * from './auth/session';
+export * from './auth/crypto';
 
 // Função para garantir isolamento de setor (Sector Isolation)
-// Esta função sempre confiará no cookie criptografado e validará no DB
 export async function requireAuth() {
   const session = await getSession();
   if (!session) {
     throw new Error('Acesso negado: Requer autenticação');
   }
   
-  // Confirmação extra no banco de dados para evitar tokens defasados se o setor mudar
+  // Confirmação extra no banco de dados para evitar tokens defasados se o setor mudar ou usuário for bloqueado
   const user = await prisma.user.findUnique({
-    where: { id: session.userId },
-    select: { sectorId: true }
+    where: { id: session.sub },
+    select: { sectorId: true, status: true }
   });
 
-  if (!user || user.sectorId !== session.sectorId) {
-    throw new Error('Acesso negado: Setor divergente ou conta inexistente');
+  if (!user || user.status !== 'ATIVO' || user.sectorId !== session.sectorId) {
+    throw new Error('Acesso negado: Conta inativa, setor divergente ou inexistente');
   }
 
   return session;

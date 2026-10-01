@@ -1,131 +1,301 @@
-import { describe, it, expect, beforeAll } from 'vitest';
-import { prisma } from '../src/lib/prisma';
-import { MovementType, PurchaseStatus } from '../src/generated/prisma';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextRequest } from 'next/server';
 
-// Estas rotinas testam o isolamento de segurança diretamente através da simulação das funções HOC ou batendo nas rotas
+// Mock dependencies
+vi.mock('@/lib/prisma', () => {
+  const mockStock = {
+    findUnique: vi.fn(),
+    updateMany: vi.fn(),
+    findUniqueOrThrow: vi.fn(),
+    upsert: vi.fn(),
+  };
+  const mockStockMovement = {
+    create: vi.fn(),
+  };
+  const mockAuditLog = {
+    create: vi.fn().mockResolvedValue({ id: 'audit-1' }),
+  };
+  const mockSector = {
+    findUnique: vi.fn(),
+  };
+  const mockProduct = {
+    findUnique: vi.fn(),
+  };
+  const mockSectorCategory = {
+    count: vi.fn(),
+    findUnique: vi.fn(),
+  };
+  const mockPurchase = {
+    findUnique: vi.fn(),
+    update: vi.fn(),
+  };
+  const mockUser = {
+    findUnique: vi.fn(),
+    update: vi.fn(),
+  };
+  const mockPasswordResetToken = {
+    create: vi.fn(),
+  };
+  const mockRolePermission = {
+    findFirst: vi.fn(),
+  };
 
-const MOCK_API_BASE = process.env.API_BASE_URL || 'http://localhost:3000/api';
+  return {
+    prisma: {
+      stock: mockStock,
+      stockMovement: mockStockMovement,
+      auditLog: mockAuditLog,
+      sector: mockSector,
+      product: mockProduct,
+      sectorCategory: mockSectorCategory,
+      purchase: mockPurchase,
+      user: mockUser,
+      passwordResetToken: mockPasswordResetToken,
+      rolePermission: mockRolePermission,
+      $transaction: vi.fn(async (cb: (tx: any) => any) => {
+        return cb({
+          stock: mockStock,
+          stockMovement: mockStockMovement,
+          auditLog: mockAuditLog,
+          purchase: mockPurchase,
+          user: mockUser,
+        });
+      }),
+    },
+  };
+});
+
+vi.mock('@/lib/auth/session', () => {
+  return {
+    getSession: vi.fn(),
+    destroySession: vi.fn().mockResolvedValue(undefined),
+    createSession: vi.fn().mockResolvedValue(undefined),
+  };
+});
+
+import { prisma } from '@/lib/prisma';
+import { getSession } from '@/lib/auth/session';
+import { POST as entryRoute } from '@/app/api/inventory/entry/route';
+import { POST as exitRoute } from '@/app/api/inventory/exit/route';
+import { POST as adjustmentRoute } from '@/app/api/inventory/adjustment/route';
+import { POST as approvePurchaseRoute } from '@/app/api/purchases/[id]/approve/route';
+import { POST as forgotPasswordRoute } from '@/app/api/auth/forgot-password/route';
 
 describe('Suite de Exploração e Segurança de Identidades (Section 62)', () => {
-  const adminToken = 'mock-token';
-  const enfermeiroToken = 'mock-enfermeiro';
-  const farmaciaSectorId = 'mock-farmacia';
-  const almoxarifadoSectorId = 'mock-almoxarifado';
-
-  let serverAvailable = false;
-
-  beforeAll(async () => {
-    try {
-      const res = await fetch(`${MOCK_API_BASE}/sectors`, { signal: AbortSignal.timeout(600) });
-      serverAvailable = res.status !== 0;
-    } catch {
-      serverAvailable = false;
-    }
+  beforeEach(() => {
+    vi.clearAllMocks();
   });
 
   it('Test 1 (Payload Sector Tampering): Bloqueia tentativa de forjar o sectorId via JSON Injection', async () => {
-    if (!serverAvailable) return;
-    const response = await fetch(`${MOCK_API_BASE}/inventory/entry`, {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Cookie': `session=${enfermeiroToken}` // Enfermeiro é da Farmácia
-      },
-      body: JSON.stringify({
-        productId: "mock-product-id",
-        quantity: 100,
-        reason: "Forjando Setor",
-        // TENTATIVA DE TAMPERING: Forçando injeção de ID do Almoxarifado
-        sectorId: almoxarifadoSectorId 
-      })
+    const userSub = crypto.randomUUID();
+    const farmaciaSectorId = crypto.randomUUID();
+    const almoxarifadoSectorId = crypto.randomUUID();
+    const productId = crypto.randomUUID();
+
+    vi.mocked(getSession).mockResolvedValue({
+      sub: userSub,
+      roleId: crypto.randomUUID(),
+      sectorId: farmaciaSectorId,
     });
 
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: userSub,
+      status: 'ATIVO',
+      roleId: 'role-enfermeiro',
+    } as any);
+
+    vi.mocked(prisma.rolePermission.findFirst).mockResolvedValue({ id: 'rp-manage' } as any);
+
+    vi.mocked(prisma.product.findUnique).mockResolvedValue({
+      id: productId,
+      name: 'Luvas de Procedimento',
+      categoryId: crypto.randomUUID(),
+    } as any);
+
+    vi.mocked(prisma.sectorCategory.count).mockResolvedValue(0);
+
+    vi.mocked(prisma.stock.upsert).mockResolvedValue({
+      id: 'stock-1',
+      productId,
+      sectorId: farmaciaSectorId,
+      quantity: 100,
+    } as any);
+
+    vi.mocked(prisma.stockMovement.create).mockResolvedValue({
+      id: 'movement-1',
+      productId,
+      sectorId: farmaciaSectorId,
+      quantity: 100,
+    } as any);
+
+    const req = new NextRequest('http://localhost:3000/api/inventory/entry', {
+      method: 'POST',
+      body: JSON.stringify({
+        productId,
+        quantity: 100,
+        reason: 'Forjando Setor',
+        // TENTATIVA DE TAMPERING: Forçando injeção de ID arbitrário do Almoxarifado
+        sectorId: almoxarifadoSectorId,
+      }),
+    });
+
+    const response = await entryRoute(req, {});
+    expect(response.status).toBe(201);
     const data = await response.json();
-    
-    // Assert 1: A API não pode ter explodido (500), mas sim interceptado e corrigido/negado.
-    // Como a HOC 'withSectorScoping' descarta o body.sectorId e impõe o session.sectorId, 
-    // a movimentação será vinculada à FARMÁCIA obrigatoriamente, protegendo o banco.
-    if (response.status === 201) {
-      expect(data.movement.sectorId).not.toBe(almoxarifadoSectorId);
-      expect(data.movement.sectorId).toBe(farmaciaSectorId);
-    } else {
-      expect([400, 403]).toContain(response.status);
-    }
+
+    // withSectorScoping expurgou o sectorId injetado e impôs o da sessão (farmaciaSectorId)
+    expect(data.movement.sectorId).not.toBe(almoxarifadoSectorId);
+    expect(data.movement.sectorId).toBe(farmaciaSectorId);
   });
 
   it('Test 2 (Unauthorized Adjustment Attempt): Bloqueia ajuste sem a permissão STOCK_ADJUST', async () => {
-    if (!serverAvailable) return;
-    const response = await fetch(`${MOCK_API_BASE}/inventory/adjustment`, {
-      method: 'POST',
-      headers: { 'Cookie': `session=${enfermeiroToken}` },
-      body: JSON.stringify({
-        productId: "mock-product-id",
-        newQuantity: 50,
-        reason: "Ajuste ilegal"
-      })
+    const userSub = crypto.randomUUID();
+    const sectorId = crypto.randomUUID();
+    const productId = crypto.randomUUID();
+
+    vi.mocked(getSession).mockResolvedValue({
+      sub: userSub,
+      roleId: crypto.randomUUID(),
+      sectorId,
     });
 
-    // Assert: Enfermeiro comum não possui STOCK_ADJUST, HOC deve barrar
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: userSub,
+      status: 'ATIVO',
+      roleId: 'role-enfermeiro',
+    } as any);
+
+    // Usuário NÃO tem a permissão STOCK_ADJUST
+    vi.mocked(prisma.rolePermission.findFirst).mockResolvedValue(null);
+
+    const req = new NextRequest('http://localhost:3000/api/inventory/adjustment', {
+      method: 'POST',
+      body: JSON.stringify({
+        productId,
+        newQuantity: 50,
+        reason: 'Ajuste ilegal',
+      }),
+    });
+
+    const response = await adjustmentRoute(req, {});
     expect(response.status).toBe(403);
     const data = await response.json();
-    expect(data.error).toContain('Você não possui autorização');
+    expect(data.error).toContain('Acesso negado: Requer permissão estrita');
   });
 
   it('Test 3 (Purchase SoD Violation): Requisitante não pode aprovar a própria compra', async () => {
-    if (!serverAvailable) return;
-    // Setup: Enfermeiro cria a requisição
-    const mockPurchaseId = "purchase-criada-pelo-enfermeiro";
-    
-    // Attack: Enfermeiro tenta aprovar sua própria requisição via CURL ou Insomnia
-    const response = await fetch(`${MOCK_API_BASE}/purchases/${mockPurchaseId}/approve`, {
-      method: 'POST',
-      headers: { 'Cookie': `session=${enfermeiroToken}` }
+    const userSub = crypto.randomUUID();
+    const purchaseId = crypto.randomUUID();
+
+    vi.mocked(getSession).mockResolvedValue({
+      sub: userSub,
+      roleId: crypto.randomUUID(),
+      sectorId: crypto.randomUUID(),
     });
 
-    // Assert: Endpoint nativamente verifica `purchase.requestedByUserId === session.sub`
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: userSub,
+      status: 'ATIVO',
+      roleId: 'role-compras',
+    } as any);
+
+    vi.mocked(prisma.rolePermission.findFirst).mockResolvedValue({ id: 'rp-approve' } as any);
+
+    // Compra onde requestedByUserId é o mesmo userSub da sessão ativa
+    vi.mocked(prisma.purchase.findUnique).mockResolvedValue({
+      id: purchaseId,
+      status: 'PENDENTE_APROVACAO',
+      requestedByUserId: userSub,
+      totalAmount: 5000,
+    } as any);
+
+    const req = new NextRequest(`http://localhost:3000/api/purchases/${purchaseId}/approve`, {
+      method: 'POST',
+    });
+
+    const params = Promise.resolve({ id: purchaseId });
+    const response = await approvePurchaseRoute(req, { params });
+
     expect(response.status).toBe(403);
     const data = await response.json();
-    expect(data.error).toContain('Segregação de funções');
+    expect(data.error).toMatch(/segregação de funções/i);
   });
 
   it('Test 4 (Negative Stock Prevention): Transações ACID impedem saldo negativo', async () => {
-    if (!serverAvailable) return;
-    // Attack: Tenta retirar 1.000.000 unidades de um estoque que tem apenas 50
-    const response = await fetch(`${MOCK_API_BASE}/inventory/exit`, {
-      method: 'POST',
-      headers: { 'Cookie': `session=${enfermeiroToken}` },
-      body: JSON.stringify({
-        productId: "mock-product-id",
-        quantity: 1000000,
-        reason: "Retirada massiva para forçar negativo"
-      })
+    const userSub = crypto.randomUUID();
+    const sectorId = crypto.randomUUID();
+    const productId = crypto.randomUUID();
+
+    vi.mocked(getSession).mockResolvedValue({
+      sub: userSub,
+      roleId: crypto.randomUUID(),
+      sectorId,
     });
 
-    // Assert: O Prisma $transaction detecta o rollback e joga o erro controlado
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: userSub,
+      status: 'ATIVO',
+      roleId: 'role-enfermeiro',
+    } as any);
+
+    vi.mocked(prisma.rolePermission.findFirst).mockResolvedValue({ id: 'rp-manage' } as any);
+
+    // Estoque com saldo de apenas 50
+    vi.mocked(prisma.stock.findUnique).mockResolvedValue({
+      id: 'stock-1',
+      productId,
+      sectorId,
+      quantity: 50,
+    } as any);
+
+    // Tentativa de retirar 1.000.000 unidades
+    const req = new NextRequest('http://localhost:3000/api/inventory/exit', {
+      method: 'POST',
+      body: JSON.stringify({
+        productId,
+        quantity: 1000000,
+        reason: 'Retirada massiva para forçar negativo',
+      }),
+    });
+
+    const response = await exitRoute(req, {});
     expect(response.status).toBe(400);
     const data = await response.json();
     expect(data.error).toBe('Saldo insuficiente em estoque');
   });
 
-  it('Test 5 (Account Enumeration Resistance): Rate limiting e ofuscação no Forgot Password', async () => {
-    if (!serverAvailable) return;
-    const res1 = await fetch(`${MOCK_API_BASE}/auth/forgot-password`, {
+  it('Test 5 (Account Enumeration Resistance): Resposta uniforme no Forgot Password', async () => {
+    vi.mocked(prisma.user.findUnique).mockImplementation((async ({ where }: any) => {
+      if (where.email === 'admin@hospital.com') {
+        return {
+          id: 'admin-uuid',
+          email: 'admin@hospital.com',
+          sectorId: 'sector-uuid',
+          status: 'ATIVO',
+        };
+      }
+      return null;
+    }) as any);
+
+    const req1 = new NextRequest('http://localhost:3000/api/auth/forgot-password', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: "email.que.nao.existe@hospital.com" })
+      body: JSON.stringify({ email: 'email.que.nao.existe@hospital.com' }),
     });
-    const res2 = await fetch(`${MOCK_API_BASE}/auth/forgot-password`, {
+
+    const req2 = new NextRequest('http://localhost:3000/api/auth/forgot-password', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: "admin@hospital.com" })
+      body: JSON.stringify({ email: 'admin@hospital.com' }),
     });
+
+    const res1 = await forgotPasswordRoute(req1);
+    const res2 = await forgotPasswordRoute(req2);
 
     const data1 = await res1.json();
     const data2 = await res2.json();
 
-    // Assert: O atacante não consegue descobrir se o e-mail existe no banco
-    expect(res1.status).toBe(200);
-    expect(res2.status).toBe(200);
+    // Assert: O atacante não consegue descobrir se o e-mail existe no banco (status 202 com mensagem idêntica)
+    expect(res1.status).toBe(202);
+    expect(res2.status).toBe(202);
     expect(data1.message).toBe(data2.message);
   });
 });

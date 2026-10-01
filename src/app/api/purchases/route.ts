@@ -63,3 +63,66 @@ export const POST = withAuth(async (request, context, session) => {
     return NextResponse.json({ error: 'Erro interno ao criar a solicitação de compra' }, { status: 500 });
   }
 });
+
+export const GET = withAuth(async (request, _context, _session) => {
+  try {
+    const url = new URL(request.url);
+    const statusParam = url.searchParams.get('status');
+    const supplierId = url.searchParams.get('supplierId');
+    const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10));
+    const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') || '50', 10)));
+    const skip = (page - 1) * limit;
+
+    const where: any = {};
+
+    if (statusParam && Object.values(PurchaseStatus).includes(statusParam as PurchaseStatus)) {
+      where.status = statusParam as PurchaseStatus;
+    }
+
+    if (supplierId) {
+      where.supplierId = supplierId;
+    }
+
+    const [total, purchases] = await Promise.all([
+      prisma.purchase.count({ where }),
+      prisma.purchase.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          supplier: true,
+          requestedBy: {
+            select: { id: true, name: true, email: true, registration: true }
+          },
+          approvedBy: {
+            select: { id: true, name: true, email: true }
+          },
+          items: {
+            include: {
+              product: {
+                select: { id: true, name: true, code: true, unit: true }
+              }
+            }
+          }
+        }
+      })
+    ]);
+
+    return NextResponse.json({
+      success: true,
+      purchases,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit)
+      }
+    });
+
+  } catch (error) {
+    console.error('List purchases error:', error);
+    return NextResponse.json({ error: 'Erro interno ao listar pedidos de compra' }, { status: 500 });
+  }
+});
+

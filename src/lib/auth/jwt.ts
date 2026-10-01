@@ -1,7 +1,15 @@
 import { SignJWT, jwtVerify } from 'jose';
 
-const secretKey = process.env.JWT_SECRET || 'chave-secreta-desenvolvimento-apenas';
-const key = new TextEncoder().encode(secretKey);
+function getJwtSecretKey(): Uint8Array {
+  const secret = process.env.JWT_SECRET;
+  if (!secret || secret.trim() === '') {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('FATAL: A variável de ambiente JWT_SECRET é obrigatória em ambiente de produção.');
+    }
+    return new TextEncoder().encode('dev-secret-key-tcc-hospital-dev-only-min32chars');
+  }
+  return new TextEncoder().encode(secret);
+}
 
 export interface TokenPayload {
   sub: string;
@@ -10,6 +18,7 @@ export interface TokenPayload {
 }
 
 export async function signToken(payload: TokenPayload): Promise<string> {
+  const key = getJwtSecretKey();
   return await new SignJWT(payload as any)
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
@@ -19,6 +28,7 @@ export async function signToken(payload: TokenPayload): Promise<string> {
 
 export async function verifyToken(token: string): Promise<TokenPayload | null> {
   try {
+    const key = getJwtSecretKey();
     const { payload } = await jwtVerify(token, key, {
       algorithms: ['HS256'],
     });

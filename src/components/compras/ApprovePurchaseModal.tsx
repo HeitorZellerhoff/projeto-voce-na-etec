@@ -36,6 +36,10 @@ export function ApprovePurchaseModal({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const [isRejecting, setIsRejecting] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [showRejectInput, setShowRejectInput] = useState(false);
+
   if (!isOpen || !purchase) return null;
 
   const isSelfRequester = purchase.requestedByUserId === currentUserId;
@@ -65,6 +69,36 @@ export function ApprovePurchaseModal({
     }
   };
 
+  const handleReject = async () => {
+    if (!rejectReason.trim() && !confirm('Deseja realmente rejeitar esta compra sem justificativa detalhada?')) {
+      return;
+    }
+
+    setIsRejecting(true);
+    setError('');
+
+    try {
+      const res = await fetch(`/api/purchases/${purchase.id}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: rejectReason.trim() || 'Rejeitada pelo responsável' }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Erro ao rejeitar a compra');
+      }
+
+      onSuccess();
+      onClose();
+    } catch (err: any) {
+      setError(err.message || 'Erro inesperado ao rejeitar compra');
+    } finally {
+      setIsRejecting(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
       <div className="bg-zinc-900 border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden relative">
@@ -83,7 +117,7 @@ export function ApprovePurchaseModal({
             </div>
             <button
               onClick={onClose}
-              disabled={isLoading}
+              disabled={isLoading || isRejecting}
               className="text-zinc-500 hover:text-white transition-colors disabled:opacity-50"
             >
               <X className="w-5 h-5" />
@@ -148,26 +182,67 @@ export function ApprovePurchaseModal({
             </div>
           </div>
 
-          <div className="pt-4 flex justify-end gap-3 border-t border-white/5 mt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={isLoading}
-              className="px-4 py-2 text-sm font-medium text-zinc-400 hover:text-white bg-white/5 hover:bg-white/10 rounded-xl transition-colors disabled:opacity-50"
-            >
-              Fechar
-            </button>
-            {isPending && (
+          {showRejectInput && isPending && (
+            <div className="mt-4 p-3.5 bg-red-500/10 border border-red-500/20 rounded-xl space-y-2">
+              <label className="text-xs font-semibold text-red-300 block">
+                Motivo da Rejeição / Cancelamento:
+              </label>
+              <textarea
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="Informe a justificativa da recusa da compra..."
+                rows={2}
+                className="w-full bg-black/50 border border-white/10 rounded-lg p-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-red-500"
+              />
+            </div>
+          )}
+
+          <div className="pt-4 flex justify-between gap-2 border-t border-white/5 mt-4">
+            <div>
+              {isPending && !showRejectInput && (
+                <button
+                  type="button"
+                  onClick={() => setShowRejectInput(true)}
+                  disabled={isLoading || isRejecting}
+                  className="px-3.5 py-2 text-xs font-medium text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-xl transition-colors disabled:opacity-50"
+                >
+                  Rejeitar Compra
+                </button>
+              )}
+              {showRejectInput && (
+                <button
+                  type="button"
+                  onClick={handleReject}
+                  disabled={isLoading || isRejecting}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-red-600 hover:bg-red-500 rounded-xl transition-all shadow-lg shadow-red-500/20 disabled:opacity-40 flex items-center gap-2"
+                >
+                  {isRejecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                  Confirmar Rejeição
+                </button>
+              )}
+            </div>
+
+            <div className="flex gap-2">
               <button
                 type="button"
-                onClick={handleApprove}
-                disabled={isLoading || isSelfRequester}
-                className="px-5 py-2 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+                onClick={onClose}
+                disabled={isLoading || isRejecting}
+                className="px-4 py-2 text-sm font-medium text-zinc-400 hover:text-white bg-white/5 hover:bg-white/10 rounded-xl transition-colors disabled:opacity-50"
               >
-                {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                Aprovar Compra
+                Fechar
               </button>
-            )}
+              {isPending && (
+                <button
+                  type="button"
+                  onClick={handleApprove}
+                  disabled={isLoading || isRejecting || isSelfRequester}
+                  className="px-5 py-2 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                  Aprovar Compra
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>

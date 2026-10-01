@@ -102,3 +102,78 @@ export const POST = withPermission('USER_MANAGE', async (request, context, sessi
     return NextResponse.json({ error: 'Erro interno ao criar colaborador' }, { status: 500 });
   }
 });
+
+export const GET = withPermission('USER_MANAGE', async (request, _context, _session) => {
+  try {
+    const url = new URL(request.url);
+    const search = url.searchParams.get('search') || '';
+    const statusParam = url.searchParams.get('status');
+    const sectorId = url.searchParams.get('sectorId');
+    const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10));
+    const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') || '50', 10)));
+    const skip = (page - 1) * limit;
+
+    const where: any = {};
+
+    if (statusParam && Object.values(UserStatus).includes(statusParam as UserStatus)) {
+      where.status = statusParam as UserStatus;
+    }
+
+    if (sectorId) {
+      where.sectorId = sectorId;
+    }
+
+    if (search.trim()) {
+      where.OR = [
+        { name: { contains: search.trim(), mode: 'insensitive' } },
+        { email: { contains: search.trim(), mode: 'insensitive' } },
+        { registration: { contains: search.trim(), mode: 'insensitive' } },
+      ];
+    }
+
+    const [total, users] = await Promise.all([
+      prisma.user.count({ where }),
+      prisma.user.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { name: 'asc' },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          registration: true,
+          status: true,
+          mustChangePassword: true,
+          sectorId: true,
+          roleId: true,
+          lastLoginAt: true,
+          passwordChangedAt: true,
+          createdAt: true,
+          sector: {
+            select: { id: true, name: true, code: true }
+          },
+          role: {
+            select: { id: true, name: true, description: true }
+          }
+        }
+      })
+    ]);
+
+    return NextResponse.json({
+      success: true,
+      users,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit)
+      }
+    });
+
+  } catch (error) {
+    console.error('List users error:', error);
+    return NextResponse.json({ error: 'Erro interno ao listar colaboradores' }, { status: 500 });
+  }
+});
+
