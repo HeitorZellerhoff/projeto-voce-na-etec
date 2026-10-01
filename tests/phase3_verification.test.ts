@@ -40,6 +40,7 @@ vi.mock('@/lib/prisma', () => {
   };
   const mockPasswordResetToken = {
     create: vi.fn(),
+    updateMany: vi.fn(),
   };
   const mockRolePermission = {
     findFirst: vi.fn(),

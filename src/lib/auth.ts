@@ -1,3 +1,7 @@
+/**
+ * Módulo Facade Central de Autenticação.
+ * Reúne e expõe as funções de JWT, gerenciamento de sessões, criptografia e validação de setor.
+ */
 import { prisma } from './prisma';
 import { getSession } from './auth/session';
 
@@ -5,7 +9,7 @@ export * from './auth/jwt';
 export * from './auth/session';
 export * from './auth/crypto';
 
-// Função para garantir isolamento de setor (Sector Isolation)
+// Função para garantir isolamento de setor (Sector Isolation) no Server Side
 export async function requireAuth() {
   const session = await getSession();
   if (!session) {

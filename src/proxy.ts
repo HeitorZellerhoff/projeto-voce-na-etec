@@ -34,7 +34,7 @@ export async function proxy(request: NextRequest) {
   // Ignorar rotas públicas, estáticos e endpoints de autenticação pública
   if (pathname.startsWith('/_next') || pathname.startsWith('/api/auth/')) {
     // Prevenção de Ataques de Força Bruta (Rate Limiting) via Vercel Edge e Upstash
-    if (pathname === '/api/auth/login' || pathname === '/api/auth/forgot-password') {
+    if (pathname === '/api/auth/login' || pathname === '/api/auth/forgot-password' || pathname === '/api/auth/reset-password') {
       if (ratelimit) {
         const ip = request.headers.get('x-forwarded-for') || '127.0.0.1';
         const { success } = await ratelimit.limit(ip);
@@ -148,10 +148,15 @@ export async function proxy(request: NextRequest) {
     }
   } catch (error: any) {
     console.warn('[PROXY WARN] Falha de conexão/timeout com Neon no proxy:', error.message || error);
-    // Em caso de falha de conexão no banco no proxy, se for rota de API protegida, retorna erro 503
+    // Decisão Arquitetural de Segurança: Falha Segura (Fail-Close)
+    // Em um sistema hospitalar, permitir acesso (Fail-Open) durante falhas do banco
+    // permitiria que colaboradores com contas revogadas, suspensas ou com desvio de setor
+    // acessassem informações sensíveis de medicamentos e pacientes.
+    // Portanto, o sistema nega o acesso de forma segura e determinística:
     if (pathname.startsWith('/api/')) {
       return NextResponse.json({ error: 'Serviço de autenticação temporariamente indisponível' }, { status: 503 });
     }
+    return NextResponse.redirect(new URL('/login?error=Servi%C3%A7o%20temporariamente%20indispon%C3%ADvel', request.url), 303);
   }
 
   const response = NextResponse.next();

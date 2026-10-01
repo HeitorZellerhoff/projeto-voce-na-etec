@@ -1,24 +1,31 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextRequest } from 'next/server';
 import { signToken, verifyToken } from '../src/lib/auth/jwt';
 import { withSectorScoping } from '../src/lib/security/guards';
-import { MovementType, RequestStatus } from '../src/generated/prisma';
+import { MovementType, RequestStatus, UserStatus } from '../src/generated/prisma';
+import { POST as exitRoute } from '../src/app/api/inventory/exit/route';
+import { POST as transferRoute } from '../src/app/api/inventory/transfer/route';
+import { POST as attendRoute } from '../src/app/api/inventory/requests/[id]/attend/route';
+import { prisma } from '../src/lib/prisma';
 
-// Mock do prisma para testar a camada de serviços e transações de forma determinística
 describe('Validação Estrutural de Setores Hospitalares e Isolamento de Estoque (Section 62/63)', () => {
-  const adminSectorId = '11111111-1111-1111-1111-111111111111';
-  const farmaciaSectorId = '22222222-2222-2222-2222-222222222222';
-  const almoxarifadoSectorId = '33333333-3333-3333-3333-333333333333';
-  const enfermariaSectorId = '44444444-4444-4444-4444-444444444444';
-  const centroCirurgicoSectorId = '55555555-5555-5555-5555-555555555555';
+  const farmaciaSectorId = crypto.randomUUID();
+  const almoxarifadoSectorId = crypto.randomUUID();
+  const enfermariaSectorId = crypto.randomUUID();
+  const centroCirurgicoSectorId = crypto.randomUUID();
 
-  const enfermeiroUserId = 'user-enfermeiro-uuid';
-  const farmaceuticoUserId = 'user-farmaceutico-uuid';
-  const almoxarifeUserId = 'user-almoxarife-uuid';
+  const enfermeiroUserId = crypto.randomUUID();
+  const farmaceuticoUserId = crypto.randomUUID();
+  const almoxarifeUserId = crypto.randomUUID();
 
-  const dipironaProductId = 'prod-dipirona-uuid';
-  const seringaProductId = 'prod-seringa-uuid';
+  const dipironaProductId = crypto.randomUUID();
+  const seringaProductId = crypto.randomUUID();
 
-  // 1. Teste de Criação de Setor como Entidade Única
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    process.env.JWT_SECRET = 'segredo-de-teste-super-seguro-com-mais-de-32-caracteres!';
+  });
+
   it('1. Setores são entidades únicas identificadas por ID e código único', () => {
     const sectorEnfermaria = {
       id: enfermariaSectorId,
@@ -43,12 +50,11 @@ describe('Validação Estrutural de Setores Hospitalares e Isolamento de Estoque
     expect(sectorEnfermaria.status).toBe('ATIVO');
   });
 
-  // 2. Teste de Associação Usuário/Setor
   it('2. Usuário possui associação estrita com seu setor no JWT/sessão e backend valida', async () => {
     const payload = {
       sub: enfermeiroUserId,
       sectorId: enfermariaSectorId,
-      roleId: 'role-enfermeiro-uuid'
+      roleId: crypto.randomUUID(),
     };
 
     const token = await signToken(payload);
@@ -61,7 +67,6 @@ describe('Validação Estrutural de Setores Hospitalares e Isolamento de Estoque
     expect(decoded?.sectorId).not.toBe(farmaciaSectorId);
   });
 
-  // 3. Teste de Criação de Estoque por Setor
   it('3. Criação de estoque associado ao setor com quantidades mínimas setoriais', () => {
     const stockFarmacia = {
       id: 'stock-farm-dipirona',
@@ -78,9 +83,7 @@ describe('Validação Estrutural de Setores Hospitalares e Isolamento de Estoque
     expect(stockFarmacia.minimumQuantity).toBe(100);
   });
 
-  // 4. Teste de Mesmo Item em Setores Diferentes com Quantidades Independentes
   it('4. REGRA FUNDAMENTAL: O mesmo item existe em múltiplos setores com estoques e saldos independentes', () => {
-    // Simulação do cenário real hospitalar com o mesmo produto (Dipirona)
     const stockFarmacia = {
       id: 'stock-farm-01',
       productId: dipironaProductId,
@@ -108,23 +111,18 @@ describe('Validação Estrutural de Setores Hospitalares e Isolamento de Estoque
       quantity: 50,
     };
 
-    // Asserção: Mesmo item físico (productId idêntico), porém estoques lógicos 100% isolados
     expect(stockFarmacia.productId).toBe(stockEnfermaria.productId);
     expect(stockEnfermaria.productId).toBe(stockCentroCirurgico.productId);
 
-    // Asserção: Setores e registros de estoque distintos
     expect(stockFarmacia.id).not.toBe(stockEnfermaria.id);
     expect(stockFarmacia.sectorId).not.toBe(stockEnfermaria.sectorId);
 
-    // Asserção: Quantidades estritamente independentes
     expect(stockFarmacia.quantity).toBe(500);
     expect(stockEnfermaria.quantity).toBe(30);
     expect(stockCentroCirurgico.quantity).toBe(50);
   });
 
-  // 5. Teste de Solicitação Entre Setores
   it('5. Solicitação entre setores possui setor solicitante, setor fornecedor, itens e status', () => {
-    // Enfermaria solicita Dipirona para a Farmácia
     const requestEnfermariaToFarmacia = {
       id: 'req-001',
       requestingSectorId: enfermariaSectorId,
@@ -148,29 +146,24 @@ describe('Validação Estrutural de Setores Hospitalares e Isolamento de Estoque
     expect(requestEnfermariaToFarmacia.items[0].requestedQuantity).toBe(50);
   });
 
-  // 6. Teste de Tentativa de Solicitação com Parameter Tampering / Sem Autorização
   it('6. Segurança: Intercepta e impede forjar o requestingSectorId via manipulação de payload', async () => {
-    // O enfermeiro da Enfermaria tenta enviar no JSON que o solicitante é a Farmácia
     const tamperedPayload = {
       supplyingSectorId: almoxarifadoSectorId,
-      sectorId: farmaciaSectorId, // Tentativa de Spoofing / Tampering
+      sectorId: farmaciaSectorId,
       items: [{ productId: seringaProductId, requestedQuantity: 100 }],
     };
 
     let receivedSectorInHandler: string | null = null;
 
-    // Simulando o HOC withSectorScoping
     const handler = withSectorScoping(async (req, ctx, session) => {
-      // O handler seguro extrai EXCLUSIVAMENTE o setor de session.sectorId
       receivedSectorInHandler = session.sectorId;
       return new Response(JSON.stringify({ success: true, sectorId: session.sectorId }));
     });
 
-    // Simulamos a emissão do token criptografado HttpOnly para o enfermeiro
     const token = await signToken({
       sub: enfermeiroUserId,
-      sectorId: enfermariaSectorId, // Setor real do token
-      roleId: 'role-enfermeiro-uuid',
+      sectorId: enfermariaSectorId,
+      roleId: crypto.randomUUID(),
     });
 
     const mockRequest = new Request('http://localhost:3000/api/inventory/requests', {
@@ -184,12 +177,10 @@ describe('Validação Estrutural de Setores Hospitalares e Isolamento de Estoque
 
     await handler(mockRequest, {});
 
-    // O backend descartou farmaciaSectorId e impôs enfermariaSectorId
     expect(receivedSectorInHandler).toBe(enfermariaSectorId);
     expect(receivedSectorInHandler).not.toBe(farmaciaSectorId);
   });
 
-  // 7. Teste de Transferência entre Setores
   it('7. Transferência e atendimento registram setor de origem e setor de destino explicitamente', () => {
     const originSector = farmaciaSectorId;
     const destSector = enfermariaSectorId;
@@ -229,70 +220,170 @@ describe('Validação Estrutural de Setores Hospitalares e Isolamento de Estoque
     expect(movementEntry.newBalance).toBe(50);
   });
 
-  // 8. Teste de Baixa de Estoque
-  it('8. Baixa de estoque decrementa o saldo do fornecedor e atualiza rastreabilidade', () => {
-    let farmaciaStockBalance = 500;
-    const transferQty = 50;
+  it('8. Baixa de estoque via rota real decrementa saldo e registra rastreabilidade com auditoria', async () => {
+    const token = await signToken({
+      sub: farmaceuticoUserId,
+      sectorId: farmaciaSectorId,
+      roleId: 'role-farmacia',
+    });
 
-    const previousBalance = farmaciaStockBalance;
-    farmaciaStockBalance -= transferQty;
-    const newBalance = farmaciaStockBalance;
+    vi.spyOn(prisma.user, 'findUnique').mockResolvedValue({
+      id: farmaceuticoUserId,
+      status: UserStatus.ATIVO,
+      roleId: 'role-farmacia',
+    } as any);
 
-    expect(previousBalance).toBe(500);
-    expect(newBalance).toBe(450);
-    expect(newBalance).toBe(previousBalance - transferQty);
+    vi.spyOn(prisma.rolePermission, 'findFirst').mockResolvedValue({ id: 'perm-manage' } as any);
+
+    let stockBalance = 500;
+    let registeredMovement: any = null;
+
+    vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+      const tx = {
+        stock: {
+          findUnique: vi.fn(async () => ({
+            id: 'stock-farm-dip',
+            productId: dipironaProductId,
+            sectorId: farmaciaSectorId,
+            quantity: stockBalance,
+          })),
+          updateMany: vi.fn(async ({ data }: any) => {
+            stockBalance -= data.quantity.decrement;
+            return { count: 1 };
+          }),
+          findUniqueOrThrow: vi.fn(async () => ({
+            id: 'stock-farm-dip',
+            quantity: stockBalance,
+          })),
+        },
+        stockMovement: {
+          create: vi.fn(async ({ data }: any) => {
+            registeredMovement = { id: 'mov-saida-01', ...data };
+            return registeredMovement;
+          }),
+        },
+        auditLog: {
+          create: vi.fn(async () => ({ id: 'audit-01' })),
+        },
+      };
+      return await cb(tx);
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/inventory/exit', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        productId: dipironaProductId,
+        quantity: 50,
+        reason: 'Dispensação para Enfermaria',
+      }),
+    });
+
+    const res = await exitRoute(req, {});
+    expect(res.status).toBe(201);
+    expect(stockBalance).toBe(450);
+    expect(registeredMovement).not.toBeNull();
+    expect(registeredMovement.quantity).toBe(50);
+    expect(registeredMovement.previousBalance).toBe(500);
+    expect(registeredMovement.newBalance).toBe(450);
   });
 
-  // 9. Teste de Quantidade Insuficiente (Prevenção de Saldo Negativo)
-  it('9. Validação atômica impede saldo negativo caso o fornecedor não possua a quantidade', () => {
-    const stockQuantity = 30;
-    const requestedQuantity = 50;
+  it('9. Validação atômica impede saldo negativo caso o fornecedor não possua a quantidade solicitada', async () => {
+    const token = await signToken({
+      sub: farmaceuticoUserId,
+      sectorId: farmaciaSectorId,
+      roleId: 'role-farmacia',
+    });
 
-    const performTransfer = (available: number, requested: number) => {
-      if (available < requested) {
-        throw new Error('INSUFFICIENT_FUNDS: Saldo insuficiente em estoque no setor fornecedor');
-      }
-      return available - requested;
-    };
+    vi.spyOn(prisma.user, 'findUnique').mockResolvedValue({
+      id: farmaceuticoUserId,
+      status: UserStatus.ATIVO,
+      roleId: 'role-farmacia',
+    } as any);
 
-    expect(() => performTransfer(stockQuantity, requestedQuantity)).toThrowError(
-      'INSUFFICIENT_FUNDS: Saldo insuficiente em estoque no setor fornecedor'
-    );
+    vi.spyOn(prisma.rolePermission, 'findFirst').mockResolvedValue({ id: 'perm-manage' } as any);
+
+    vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+      const tx = {
+        stock: {
+          findUnique: vi.fn(async () => ({
+            id: 'stock-farm-dip',
+            productId: dipironaProductId,
+            sectorId: farmaciaSectorId,
+            quantity: 30, // Apenas 30 disponíveis
+          })),
+          updateMany: vi.fn(async () => ({ count: 0 })),
+        },
+      };
+      return await cb(tx);
+    });
+
+    // Tentativa de retirar 50 quando só existem 30
+    const req = new NextRequest('http://localhost:3000/api/inventory/exit', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        productId: dipironaProductId,
+        quantity: 50,
+        reason: 'Tentativa de retirada acima do saldo',
+      }),
+    });
+
+    const res = await exitRoute(req, {});
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toBe('Saldo insuficiente em estoque');
   });
 
-  // 10. Teste de Tentativa de Acessar/Alterar Estoque de Outro Setor sem Permissão
-  it('10. Isolamento de Setor: Impede que colaborador da Enfermaria atenda solicitação destinada a Farmácia', () => {
-    const request = {
-      id: 'req-002',
-      requestingSectorId: enfermariaSectorId,
-      supplyingSectorId: farmaciaSectorId, // Apenas a Farmácia pode atender
-      status: RequestStatus.PENDENTE,
-    };
+  it('10. Isolamento de Setor: Impede que colaborador da Enfermaria atenda solicitação destinada a Farmácia', async () => {
+    const requestId = crypto.randomUUID();
 
-    // Colaborador tentando atender: Enfermeiro da Enfermaria
-    const userAttemptingAction = {
-      id: enfermeiroUserId,
+    // Sessão de enfermeiro pertencente à Enfermaria
+    const token = await signToken({
+      sub: enfermeiroUserId,
       sectorId: enfermariaSectorId,
-      role: 'ENFERMEIRO'
-    };
+      roleId: 'role-enfermeiro',
+    });
 
-    const canAttend = (req: typeof request, user: typeof userAttemptingAction) => {
-      const isSupplyingSector = user.sectorId === req.supplyingSectorId;
-      const isAdmin = user.role === 'ADMINISTRADOR';
-      if (!isSupplyingSector && !isAdmin) {
-        throw new Error('Acesso negado: Colaborador não pertence ao setor fornecedor desta solicitação');
-      }
-      return true;
-    };
+    vi.spyOn(prisma.sectorRequest, 'findUnique').mockResolvedValue({
+      id: requestId,
+      supplyingSectorId: farmaciaSectorId, // Setor fornecedor é a Farmácia
+      requestingSectorId: enfermariaSectorId,
+      status: RequestStatus.PENDENTE,
+      items: [],
+      requestingSector: { name: 'Enfermaria' },
+      supplyingSector: { name: 'Farmácia' },
+    } as any);
 
-    expect(() => canAttend(request, userAttemptingAction)).toThrowError(
-      'Acesso negado: Colaborador não pertence ao setor fornecedor desta solicitação'
-    );
+    vi.spyOn(prisma.user, 'findUnique').mockResolvedValue({
+      id: enfermeiroUserId,
+      status: UserStatus.ATIVO,
+      role: { name: 'ENFERMEIRO' }, // Não é administrador nem da Farmácia
+    } as any);
+
+    const req = new NextRequest(`http://localhost:3000/api/inventory/requests/${requestId}/attend`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    const params = Promise.resolve({ id: requestId });
+    const res = await attendRoute(req, { params });
+
+    expect(res.status).toBe(403);
+    const json = await res.json();
+    expect(json.error).toMatch(/setor fornecedor/i);
   });
 
-  // 11. Teste de Histórico e Rastreabilidade Completa da Movimentação
   it('11. Rastreabilidade Completa: Toda movimentação registra origem, destino, usuário e ID da solicitação', () => {
-    const requestId = 'req-hosp-789-uuid';
+    const requestId = crypto.randomUUID();
 
     const auditTrail = {
       id: 'mov-audit-01',
@@ -314,47 +405,87 @@ describe('Validação Estrutural de Setores Hospitalares e Isolamento de Estoque
     expect(auditTrail.type).toBe('TRANSFERENCIA');
   });
 
-  // 12. Validação dos Fluxos Hospitalares Canônicos
-  it('12. Demonstração dos três fluxos principais com estoques separados e isolados', () => {
-    // Estado inicial de estoques de Seringa 10ml
-    const initialStocks = {
-      almoxarifado: 2000,
-      farmacia: 400,
-      enfermaria: 80,
-      centroCirurgico: 250,
-    };
+  it('12. Demonstração dos três fluxos hospitalares canônicos via rota real de transferência', async () => {
+    const token = await signToken({
+      sub: almoxarifeUserId,
+      sectorId: almoxarifadoSectorId,
+      roleId: 'role-almoxarifado',
+    });
 
-    // Fluxo A: Farmácia → solicita 100 ao Almoxarifado
-    const fluxoAFarmaciaToAlmox = 100;
-    initialStocks.almoxarifado -= fluxoAFarmaciaToAlmox;
-    initialStocks.farmacia += fluxoAFarmaciaToAlmox;
+    vi.spyOn(prisma.user, 'findUnique').mockResolvedValue({
+      id: almoxarifeUserId,
+      status: UserStatus.ATIVO,
+      roleId: 'role-almoxarifado',
+    } as any);
 
-    expect(initialStocks.almoxarifado).toBe(1900);
-    expect(initialStocks.farmacia).toBe(500);
-    expect(initialStocks.enfermaria).toBe(80); // Permanece inalterado
-    expect(initialStocks.centroCirurgico).toBe(250); // Permanece inalterado
+    vi.spyOn(prisma.rolePermission, 'findFirst').mockResolvedValue({ id: 'perm-manage' } as any);
 
-    // Fluxo B: Enfermaria → solicita 30 a Farmácia
-    const fluxoBEnfToFarm = 30;
-    initialStocks.farmacia -= fluxoBEnfToFarm;
-    initialStocks.enfermaria += fluxoBEnfToFarm;
+    vi.spyOn(prisma.sector, 'findUnique').mockResolvedValue({
+      id: farmaciaSectorId,
+      name: 'Farmácia Central',
+      status: 'ATIVO',
+    } as any);
 
-    expect(initialStocks.farmacia).toBe(470);
-    expect(initialStocks.enfermaria).toBe(110);
-    expect(initialStocks.almoxarifado).toBe(1900); // Permanece inalterado
+    vi.spyOn(prisma.product, 'findUnique').mockResolvedValue({
+      id: seringaProductId,
+      name: 'Seringa Descartável 10ml',
+      categoryId: crypto.randomUUID(),
+    } as any);
 
-    // Fluxo C: Centro Cirúrgico → solicita 150 ao Almoxarifado
-    const fluxoCCCtoAlmox = 150;
-    initialStocks.almoxarifado -= fluxoCCCtoAlmox;
-    initialStocks.centroCirurgico += fluxoCCCtoAlmox;
+    vi.spyOn(prisma.sectorCategory, 'count').mockResolvedValue(0);
 
-    expect(initialStocks.almoxarifado).toBe(1750);
-    expect(initialStocks.centroCirurgico).toBe(400);
+    let almoxStock = 2000;
+    let farmStock = 400;
 
-    // Verificação final dos saldos isolados
-    expect(initialStocks.almoxarifado).toBe(1750);
-    expect(initialStocks.farmacia).toBe(470);
-    expect(initialStocks.enfermaria).toBe(110);
-    expect(initialStocks.centroCirurgico).toBe(400);
+    vi.spyOn(prisma, '$transaction').mockImplementation(async (cb: any) => {
+      const tx = {
+        stock: {
+          findUnique: vi.fn(async () => ({
+            id: 'stock-almox-seringa',
+            productId: seringaProductId,
+            sectorId: almoxarifadoSectorId,
+            quantity: almoxStock,
+          })),
+          updateMany: vi.fn(async ({ data }: any) => {
+            almoxStock -= data.quantity.decrement;
+            return { count: 1 };
+          }),
+          findUniqueOrThrow: vi.fn(async () => ({
+            id: 'stock-almox-seringa',
+            quantity: almoxStock,
+          })),
+          upsert: vi.fn(async () => {
+            farmStock += 100;
+            return { id: 'stock-farm-seringa', quantity: farmStock };
+          }),
+        },
+        stockMovement: {
+          create: vi.fn(async ({ data }: any) => ({ id: 'mov-transf-1', ...data })),
+        },
+        auditLog: {
+          create: vi.fn(async () => ({ id: 'audit-transf-1' })),
+        },
+      };
+      return await cb(tx);
+    });
+
+    const req = new NextRequest('http://localhost:3000/api/inventory/transfer', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        productId: seringaProductId,
+        destinationSectorId: farmaciaSectorId,
+        quantity: 100,
+        reason: 'Transferência de estoque para farmácia',
+      }),
+    });
+
+    const res = await transferRoute(req, {});
+    expect(res.status).toBe(201);
+    expect(almoxStock).toBe(1900);
+    expect(farmStock).toBe(500);
   });
 });

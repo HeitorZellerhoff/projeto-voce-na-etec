@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
+// Mock neon for proxy tests
+const mockNeonQuery = vi.fn();
+vi.mock('@neondatabase/serverless', () => ({
+  neon: () => mockNeonQuery,
+}));
+
 // Mock dependencies
 vi.mock('@/lib/prisma', () => {
   const mockStock = {
@@ -35,6 +41,7 @@ vi.mock('@/lib/prisma', () => {
   };
   const mockPasswordResetToken = {
     create: vi.fn(),
+    updateMany: vi.fn(),
   };
   const mockRolePermission = {
     findFirst: vi.fn(),
@@ -75,15 +82,20 @@ vi.mock('@/lib/auth/session', () => {
 
 import { prisma } from '@/lib/prisma';
 import { getSession } from '@/lib/auth/session';
+import { signToken } from '@/lib/auth/jwt';
 import { POST as entryRoute } from '@/app/api/inventory/entry/route';
 import { POST as exitRoute } from '@/app/api/inventory/exit/route';
 import { POST as adjustmentRoute } from '@/app/api/inventory/adjustment/route';
 import { POST as approvePurchaseRoute } from '@/app/api/purchases/[id]/approve/route';
 import { POST as forgotPasswordRoute } from '@/app/api/auth/forgot-password/route';
+import { proxy } from '@/proxy';
+import { withSectorScoping } from '@/lib/security/guards';
 
-describe('Suite de Exploração e Segurança de Identidades (Section 62)', () => {
+describe('Suite de Exploração e Segurança de Identidades (DEM-017 & DEM-019)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.JWT_SECRET = 'segredo-de-teste-super-seguro-com-mais-de-32-caracteres!';
+    process.env.DATABASE_URL = 'postgresql://test:test@neon.tech/test';
   });
 
   it('Test 1 (Payload Sector Tampering): Bloqueia tentativa de forjar o sectorId via JSON Injection', async () => {
@@ -134,7 +146,6 @@ describe('Suite de Exploração e Segurança de Identidades (Section 62)', () =>
         productId,
         quantity: 100,
         reason: 'Forjando Setor',
-        // TENTATIVA DE TAMPERING: Forçando injeção de ID arbitrário do Almoxarifado
         sectorId: almoxarifadoSectorId,
       }),
     });
@@ -146,6 +157,33 @@ describe('Suite de Exploração e Segurança de Identidades (Section 62)', () =>
     // withSectorScoping expurgou o sectorId injetado e impôs o da sessão (farmaciaSectorId)
     expect(data.movement.sectorId).not.toBe(almoxarifadoSectorId);
     expect(data.movement.sectorId).toBe(farmaciaSectorId);
+  });
+
+  it('Test 1B (Query Sector Tampering): Intercepta e remove sectorId injetado na URL Query String', async () => {
+    const userSub = crypto.randomUUID();
+    const enfermariaSectorId = crypto.randomUUID();
+    const farmaciaSectorId = crypto.randomUUID();
+
+    vi.mocked(getSession).mockResolvedValue({
+      sub: userSub,
+      roleId: crypto.randomUUID(),
+      sectorId: enfermariaSectorId,
+    });
+
+    let capturedSectorId: string | null = null;
+    const testHandler = withSectorScoping(async (req, ctx, session) => {
+      capturedSectorId = session.sectorId;
+      return new Response(JSON.stringify({ ok: true, sectorId: session.sectorId }), { status: 200 });
+    });
+
+    const req = new NextRequest(`http://localhost:3000/api/inventory/items?sectorId=${farmaciaSectorId}`, {
+      method: 'GET',
+    });
+
+    const res = await testHandler(req, {});
+    expect(res.status).toBe(200);
+    expect(capturedSectorId).toBe(enfermariaSectorId);
+    expect(capturedSectorId).not.toBe(farmaciaSectorId);
   });
 
   it('Test 2 (Unauthorized Adjustment Attempt): Bloqueia ajuste sem a permissão STOCK_ADJUST', async () => {
@@ -293,9 +331,109 @@ describe('Suite de Exploração e Segurança de Identidades (Section 62)', () =>
     const data1 = await res1.json();
     const data2 = await res2.json();
 
-    // Assert: O atacante não consegue descobrir se o e-mail existe no banco (status 202 com mensagem idêntica)
     expect(res1.status).toBe(202);
     expect(res2.status).toBe(202);
     expect(data1.message).toBe(data2.message);
+  });
+
+  it('Test 6 (Real-Time Revocation): Bloqueio em tempo real rejeita sessão mesmo com JWT válido', async () => {
+    const userSub = crypto.randomUUID();
+    const validToken = await signToken({
+      sub: userSub,
+      sectorId: crypto.randomUUID(),
+      roleId: crypto.randomUUID(),
+    });
+
+    // Banco de dados informa que o usuário foi BLOQUEADO
+    mockNeonQuery.mockResolvedValueOnce([
+      {
+        status: 'BLOQUEADO',
+        mustChangePassword: false,
+        sectorCode: 'farmacia',
+        roleName: 'FARMACEUTICO',
+      },
+    ]);
+
+    const req = new NextRequest('http://localhost:3000/api/inventory/entry', {
+      headers: {
+        cookie: `session=${validToken}`,
+      },
+    });
+
+    const res = await proxy(req);
+    expect(res.status).toBe(403);
+    const data = await res.json();
+    expect(data.error).toMatch(/BLOQUEADO/i);
+  });
+
+  it('Test 7 (Proxy Fail-Close on Database Failure for APIs): Retorna 503 Fail-Close quando Neon/DB está indisponível', async () => {
+    const validToken = await signToken({
+      sub: 'user-sub-1',
+      sectorId: 'sector-1',
+      roleId: 'role-1',
+    });
+
+    // Simula falha catastrófica de rede/timeout com o banco de dados Neon
+    mockNeonQuery.mockRejectedValueOnce(new Error('Connection timeout to neon postgres server'));
+
+    const req = new NextRequest('http://localhost:3000/api/inventory/items', {
+      headers: {
+        cookie: `session=${validToken}`,
+      },
+    });
+
+    const res = await proxy(req);
+    // Deve falhar fechado com 503 (Fail-Close)
+    expect(res.status).toBe(503);
+    const json = await res.json();
+    expect(json.error).toMatch(/Serviço de autenticação temporariamente indisponível/i);
+  });
+
+  it('Test 8 (Proxy Fail-Close on Database Failure for Dashboard): Redireciona com 303 para login com mensagem segura', async () => {
+    const validToken = await signToken({
+      sub: 'user-sub-1',
+      sectorId: 'sector-1',
+      roleId: 'role-1',
+    });
+
+    mockNeonQuery.mockRejectedValueOnce(new Error('Neon database unreachable'));
+
+    const req = new NextRequest('http://localhost:3000/dashboard/farmacia', {
+      headers: {
+        cookie: `session=${validToken}`,
+      },
+    });
+
+    const res = await proxy(req);
+    // Deve falhar fechado com redirecionamento para login (Fail-Close)
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toContain('/login?error=Servi%C3%A7o%20temporariamente%20indispon%C3%ADvel');
+  });
+
+  it('Test 9 (Cross-Sector Frontend Guard): Usuário da Farmácia é redirecionado ao tentar acessar /dashboard/compras', async () => {
+    const validToken = await signToken({
+      sub: 'user-farmaceutico',
+      sectorId: 'sector-farmacia',
+      roleId: 'role-farmacia',
+    });
+
+    mockNeonQuery.mockResolvedValueOnce([
+      {
+        status: 'ATIVO',
+        mustChangePassword: false,
+        sectorCode: 'farmacia',
+        roleName: 'FARMACEUTICO',
+      },
+    ]);
+
+    const req = new NextRequest('http://localhost:3000/dashboard/compras', {
+      headers: {
+        cookie: `session=${validToken}`,
+      },
+    });
+
+    const res = await proxy(req);
+    expect(res.status).toBe(303);
+    expect(res.headers.get('location')).toContain('/403-acesso-negado');
   });
 });

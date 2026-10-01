@@ -9,5 +9,8 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
+    env: {
+      JWT_SECRET: 'super-secret-key-for-vitest-environment-with-32chars',
+    },
   },
 });

@@ -12,6 +12,7 @@ vi.mock('@/lib/prisma', () => {
     create: vi.fn(),
     findFirst: vi.fn(),
     update: vi.fn(),
+    updateMany: vi.fn(),
   };
   const mockAuditLog = {
     create: vi.fn().mockResolvedValue({ id: 'audit-1' }),
@@ -35,14 +36,15 @@ vi.mock('@/lib/prisma', () => {
 
 vi.mock('@/lib/auth/crypto', () => {
   return {
-    hashPassword: vi.fn().mockResolvedValue('hashed-super-secure-password'),
-    verifyPassword: vi.fn().mockResolvedValue(true),
+    hashPassword: vi.fn().mockImplementation(async (pw: string) => `hashed:${pw}`),
+    verifyPassword: vi.fn().mockImplementation(async (plain: string, hash: string) => hash === `hashed:${plain}`),
   };
 });
 
 import { prisma } from '@/lib/prisma';
 import { POST as forgotPasswordRoute } from '@/app/api/auth/forgot-password/route';
 import { POST as resetPasswordRoute } from '@/app/api/auth/reset-password/route';
+import { verifyPassword } from '@/lib/auth/crypto';
 
 describe('DEM-018: Password Reset Complete Lifecycle Tests', () => {
   beforeEach(() => {
@@ -77,6 +79,17 @@ describe('DEM-018: Password Reset Complete Lifecycle Tests', () => {
       const json = await res.json();
       expect(json.success).toBe(true);
 
+      // Garante que tokens anteriores foram invalidados preventivamente
+      expect(prisma.passwordResetToken.updateMany).toHaveBeenCalledWith({
+        where: {
+          userId: userUuid,
+          usedAt: null,
+        },
+        data: {
+          usedAt: expect.any(Date),
+        },
+      });
+
       expect(prisma.passwordResetToken.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
@@ -102,11 +115,41 @@ describe('DEM-018: Password Reset Complete Lifecycle Tests', () => {
       const res = await forgotPasswordRoute(req);
       expect(res.status).toBe(202);
       expect(prisma.passwordResetToken.create).not.toHaveBeenCalled();
+      expect(prisma.passwordResetToken.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('returns constant 202 for blocked or inactive user without creating reset token', async () => {
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({
+        id: 'blocked-user',
+        email: 'bloqueado@hospital.com',
+        status: 'BLOQUEADO',
+      } as any);
+
+      const req = new NextRequest('http://localhost:3000/api/auth/forgot-password', {
+        method: 'POST',
+        body: JSON.stringify({ email: 'bloqueado@hospital.com' }),
+      });
+
+      const res = await forgotPasswordRoute(req);
+      expect(res.status).toBe(202);
+      expect(prisma.passwordResetToken.create).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 for invalid email format', async () => {
+      const req = new NextRequest('http://localhost:3000/api/auth/forgot-password', {
+        method: 'POST',
+        body: JSON.stringify({ email: 'formato-invalido' }),
+      });
+
+      const res = await forgotPasswordRoute(req);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toMatch(/e-mail inválido/i);
     });
   });
 
   describe('2. Reset Password Execution & Token Invalidation', () => {
-    it('successfully resets password, invalidates token with usedAt, and logs audit', async () => {
+    it('successfully resets password, invalidates token with usedAt, invalidates other tokens and logs audit', async () => {
       const rawToken = 'sample-plain-recovery-token-1234567890';
       const expectedTokenHash = createHash('sha256').update(rawToken).digest('hex');
       const userUuid = crypto.randomUUID();
@@ -125,6 +168,12 @@ describe('DEM-018: Password Reset Complete Lifecycle Tests', () => {
           status: 'ATIVO',
         },
       } as any);
+
+      let savedPasswordHash = '';
+      vi.mocked(prisma.user.update).mockImplementation(async ({ data }: any) => {
+        savedPasswordHash = data.passwordHash;
+        return { id: userUuid, ...data };
+      });
 
       const req = new NextRequest('http://localhost:3000/api/auth/reset-password', {
         method: 'POST',
@@ -151,7 +200,7 @@ describe('DEM-018: Password Reset Complete Lifecycle Tests', () => {
         expect.objectContaining({
           where: { id: userUuid },
           data: expect.objectContaining({
-            passwordHash: 'hashed-super-secure-password',
+            passwordHash: 'hashed:NewSecurePassword123!',
             mustChangePassword: false,
           }),
         })
@@ -161,6 +210,19 @@ describe('DEM-018: Password Reset Complete Lifecycle Tests', () => {
       expect(prisma.passwordResetToken.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 'reset-record-1' },
+          data: expect.objectContaining({
+            usedAt: expect.any(Date),
+          }),
+        })
+      );
+
+      // Verify other pending tokens for the user were also invalidated
+      expect(prisma.passwordResetToken.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            userId: userUuid,
+            usedAt: null,
+          },
           data: expect.objectContaining({
             usedAt: expect.any(Date),
           }),
@@ -177,6 +239,12 @@ describe('DEM-018: Password Reset Complete Lifecycle Tests', () => {
           }),
         })
       );
+
+      // Verify user can now authenticate with the new password
+      const canLoginWithNewPw = await verifyPassword('NewSecurePassword123!', savedPasswordHash);
+      expect(canLoginWithNewPw).toBe(true);
+      const cannotLoginWithOldPw = await verifyPassword('OldPassword123!', savedPasswordHash);
+      expect(cannotLoginWithOldPw).toBe(false);
     });
 
     it('rejects reset if token was already used (replay attack prevention)', async () => {
@@ -232,6 +300,34 @@ describe('DEM-018: Password Reset Complete Lifecycle Tests', () => {
       expect(res.status).toBe(400);
       const json = await res.json();
       expect(json.error).toMatch(/expirou/i);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects reset if user is BLOQUEADO or INATIVO', async () => {
+      const rawToken = 'token-para-bloqueado-12345';
+      const expectedTokenHash = createHash('sha256').update(rawToken).digest('hex');
+
+      vi.mocked(prisma.passwordResetToken.findFirst).mockResolvedValue({
+        id: 'reset-record-blocked',
+        tokenHash: expectedTokenHash,
+        userId: 'user-blocked',
+        expiresAt: new Date(Date.now() + 1800000),
+        usedAt: null,
+        user: { id: 'user-blocked', status: 'BLOQUEADO' },
+      } as any);
+
+      const req = new NextRequest('http://localhost:3000/api/auth/reset-password', {
+        method: 'POST',
+        body: JSON.stringify({
+          token: rawToken,
+          newPassword: 'NewSecurePassword123!',
+        }),
+      });
+
+      const res = await resetPasswordRoute(req);
+      expect(res.status).toBe(403);
+      const json = await res.json();
+      expect(json.error).toMatch(/BLOQUEADO/i);
       expect(prisma.user.update).not.toHaveBeenCalled();
     });
 

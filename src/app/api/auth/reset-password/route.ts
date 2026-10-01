@@ -12,7 +12,13 @@ const resetPasswordSchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: 'Corpo da requisição inválido' }, { status: 400 });
+    }
+
     const result = resetPasswordSchema.safeParse(body);
 
     if (!result.success) {
@@ -67,7 +73,7 @@ export async function POST(request: Request) {
         },
       });
 
-      // 2. Invalida o token marcando o carimbo usedAt
+      // 2. Invalida o token atual marcando usedAt
       await tx.passwordResetToken.update({
         where: { id: resetRecord.id },
         data: {
@@ -75,7 +81,18 @@ export async function POST(request: Request) {
         },
       });
 
-      // 3. Registra auditoria de segurança
+      // 3. Invalida preventivamente todos os outros tokens pendentes deste usuário (DEM-018)
+      await tx.passwordResetToken.updateMany({
+        where: {
+          userId: resetRecord.userId,
+          usedAt: null,
+        },
+        data: {
+          usedAt: new Date(),
+        },
+      });
+
+      // 4. Registra auditoria de segurança
       await tx.auditLog.create({
         data: {
           userId: resetRecord.userId,

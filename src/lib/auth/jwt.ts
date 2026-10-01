@@ -1,12 +1,12 @@
 import { SignJWT, jwtVerify } from 'jose';
 
-function getJwtSecretKey(): Uint8Array {
+export function getJwtSecretKey(): Uint8Array {
   const secret = process.env.JWT_SECRET;
   if (!secret || secret.trim() === '') {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('FATAL: A variável de ambiente JWT_SECRET é obrigatória em ambiente de produção.');
-    }
-    return new TextEncoder().encode('dev-secret-key-tcc-hospital-dev-only-min32chars');
+    throw new Error('FATAL: A variável de ambiente JWT_SECRET é obrigatória e não foi configurada.');
+  }
+  if (secret.length < 32) {
+    throw new Error('FATAL: A variável de ambiente JWT_SECRET é insegura (mínimo de 32 caracteres exigido para HS256).');
   }
   return new TextEncoder().encode(secret);
 }
@@ -15,6 +15,7 @@ export interface TokenPayload {
   sub: string;
   sectorId: string;
   roleId: string;
+  userId?: string;
 }
 
 export async function signToken(payload: TokenPayload): Promise<string> {
@@ -34,6 +35,10 @@ export async function verifyToken(token: string): Promise<TokenPayload | null> {
     });
     return payload as unknown as TokenPayload;
   } catch (error) {
+    // Falha segura: Se o erro for de configuração ausente/insegura do JWT_SECRET, propaga explicitamente
+    if (error instanceof Error && error.message.startsWith('FATAL: A variável de ambiente JWT_SECRET')) {
+      throw error;
+    }
     return null;
   }
 }
