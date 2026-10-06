@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { NextRequest } from 'next/server';
 import { neonConfig } from '@neondatabase/serverless';
 import ws from 'ws';
+import net from 'node:net';
 import { prisma } from '../src/lib/prisma';
 import { signToken } from '../src/lib/auth/jwt';
 import { verifyPassword } from '../src/lib/auth/crypto';
@@ -9,16 +10,40 @@ import { POST as exitRoute } from '../src/app/api/inventory/exit/route';
 import { POST as forgotPasswordRoute } from '../src/app/api/auth/forgot-password/route';
 import { POST as resetPasswordRoute } from '../src/app/api/auth/reset-password/route';
 
-// Configuração do driver Neon para encaminhar conexões WebSocket para o proxy local PostgreSQL
-neonConfig.webSocketConstructor = ws;
-neonConfig.wsProxy = (host, port) => `127.0.0.1:5433/v2?address=${host}:${port}`;
-neonConfig.useSecureWebSocket = false;
-neonConfig.pipelineTLS = false;
+async function isProxyAvailable(port = 5433, host = '127.0.0.1', timeoutMs = 250): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once('timeout', () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.once('error', () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.connect(port, host);
+  });
+}
 
-process.env.DATABASE_URL = 'postgresql://postgres:postgres@127.0.0.1:5432/hospital_test';
+const isDbAvailable = await isProxyAvailable(5433, '127.0.0.1');
+
+if (isDbAvailable) {
+  // Configuração do driver Neon para encaminhar conexões WebSocket para o proxy local PostgreSQL
+  neonConfig.webSocketConstructor = ws;
+  neonConfig.wsProxy = (host, port) => `127.0.0.1:5433/v2?address=${host}:${port}`;
+  neonConfig.useSecureWebSocket = false;
+  neonConfig.pipelineTLS = false;
+}
+
+process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgresql://postgres:postgres@127.0.0.1:5432/hospital_test';
 process.env.JWT_SECRET = 'segredo-de-teste-super-seguro-com-mais-de-32-caracteres!';
 
-describe('DEM-021: Validação de Integração Real com PostgreSQL (Sem Mocks de Persistência)', () => {
+describe.skipIf(!isDbAvailable)('DEM-021: Validação de Integração Real com PostgreSQL (Sem Mocks de Persistência)', () => {
   let farmaciaSector: any;
   let farmaceuticoUser: any;
   let dipironaProduct: any;
