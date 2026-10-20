@@ -8,16 +8,123 @@ import { Redis } from '@upstash/redis';
 // Instanciar o Redis e Rate Limiter condicionalmente para não quebrar setups locais que não tenham configurado
 let ratelimit: Ratelimit | null = null;
 if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
-  const redis = new Redis({
-    url: process.env.UPSTASH_REDIS_REST_URL,
-    token: process.env.UPSTASH_REDIS_REST_TOKEN,
-  });
-  // Limite: 5 requisições por minuto por IP (Sliding Window)
-  ratelimit = new Ratelimit({
-    redis,
-    limiter: Ratelimit.slidingWindow(5, '1 m'),
-    analytics: false,
-  });
+  try {
+    const redis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN,
+    });
+    // Limite: 5 requisições por minuto por IP (Sliding Window) com timeout defensivo
+    ratelimit = new Ratelimit({
+      redis,
+      limiter: Ratelimit.slidingWindow(5, '1 m'),
+      analytics: false,
+      timeout: 2000,
+    });
+  } catch (initErr: any) {
+    console.warn('[RATE_LIMIT WARN] Falha ao inicializar Upstash Redis:', initErr?.message || initErr);
+    ratelimit = null;
+  }
+}
+
+// Armazenamento em memória para contingência/fallback quando Redis estiver indisponível ou sofrer timeout
+interface InMemoryRateLimitRecord {
+  count: number;
+  resetAt: number;
+}
+const inMemoryFallbackStore = new Map<string, InMemoryRateLimitRecord>();
+
+export function checkInMemoryRateLimit(
+  ip: string,
+  limit: number = 5,
+  windowMs: number = 60000
+): { success: boolean; remaining: number; reset: number } {
+  const now = Date.now();
+  
+  // Limpeza preventiva de registros expirados para evitar vazamento de memória em execuções prolongadas
+  if (inMemoryFallbackStore.size > 1000) {
+    for (const [key, value] of inMemoryFallbackStore.entries()) {
+      if (value.resetAt <= now) {
+        inMemoryFallbackStore.delete(key);
+      }
+    }
+  }
+
+  const record = inMemoryFallbackStore.get(ip);
+  if (!record || record.resetAt <= now) {
+    const reset = now + windowMs;
+    inMemoryFallbackStore.set(ip, { count: 1, resetAt: reset });
+    return { success: true, remaining: limit - 1, reset };
+  }
+
+  if (record.count >= limit) {
+    return { success: false, remaining: 0, reset: record.resetAt };
+  }
+
+  record.count += 1;
+  return { success: true, remaining: limit - record.count, reset: record.resetAt };
+}
+
+export function resetInMemoryRateLimitStore(): void {
+  inMemoryFallbackStore.clear();
+}
+
+function buildRateLimitResponse(path: string) {
+  return NextResponse.json(
+    { 
+      statusCode: 429, 
+      message: 'Muitas tentativas de acesso. Por favor, aguarde um minuto antes de tentar novamente.', 
+      timestamp: new Date().toISOString(), 
+      path,
+    },
+    { status: 429 }
+  );
+}
+
+async function evaluateRateLimit(request: NextRequest, pathname: string): Promise<boolean> {
+  if (!ratelimit) return true;
+
+  const forwarded = request.headers.get('x-forwarded-for');
+  const ip = (forwarded ? forwarded.split(',')[0].trim() : null) || '127.0.0.1';
+
+  let timeoutTimer: NodeJS.Timeout | undefined;
+  try {
+    const timeoutPromise = new Promise<{ isTimeout: true }>((resolve) => {
+      timeoutTimer = setTimeout(() => resolve({ isTimeout: true }), 2000);
+    });
+
+    const limitPromise = ratelimit.limit(ip).then((res) => ({ ...res, isTimeout: false as const }));
+    const result = await Promise.race([limitPromise, timeoutPromise]);
+
+    if (result.isTimeout) {
+      console.warn(`[RATE_LIMIT WARN] Timeout de conexão com Upstash Redis em ${pathname} para IP ${ip}. Ativando contingência em memória.`);
+      const fallback = checkInMemoryRateLimit(ip, 5, 60000);
+      return fallback.success;
+    }
+
+    if (result.reason === 'timeout') {
+      console.warn(`[RATE_LIMIT WARN] Timeout reportado pelo cliente Upstash em ${pathname} para IP ${ip}. Ativando contingência em memória.`);
+      const fallback = checkInMemoryRateLimit(ip, 5, 60000);
+      return fallback.success;
+    }
+
+    return result.success;
+  } catch (error: any) {
+    // Sanitização rigorosa: elimina URLs de conexão, tokens ou senhas dos logs de advertência
+    const rawMsg = error?.message || String(error);
+    const sanitizedMsg = rawMsg
+      .replace(/https?:\/\/[^\s]+/gi, '[REDACTED_URL]')
+      .replace(/Bearer\s+[^\s]+/gi, 'Bearer [REDACTED_TOKEN]');
+
+    console.warn(`[RATE_LIMIT WARN] Falha de infraestrutura no Upstash Redis (${sanitizedMsg}) em ${pathname}. Ativando contingência em memória.`);
+    
+    // Degradação graciosa para fallback em memória (Fail-Open Controlado): permite usuários legítimos e bloqueia força bruta abusiva
+    const fallback = checkInMemoryRateLimit(ip, 5, 60000);
+    return fallback.success;
+  } finally {
+    if (timeoutTimer) {
+      clearTimeout(timeoutTimer);
+    }
+  }
 }
 
 export async function proxy(request: NextRequest) {
@@ -26,6 +133,12 @@ export async function proxy(request: NextRequest) {
   // Tratamento para requisições POST em /login (reescreve internamente para a rota de API de autenticação)
   if (pathname === '/login') {
     if (request.method === 'POST') {
+      if (ratelimit) {
+        const rateLimitPassed = await evaluateRateLimit(request, pathname);
+        if (!rateLimitPassed) {
+          return buildRateLimitResponse(pathname);
+        }
+      }
       return NextResponse.rewrite(new URL('/api/auth/login', request.url));
     }
     return NextResponse.next();
@@ -36,18 +149,9 @@ export async function proxy(request: NextRequest) {
     // Prevenção de Ataques de Força Bruta (Rate Limiting) via Vercel Edge e Upstash
     if (pathname === '/api/auth/login' || pathname === '/api/auth/forgot-password' || pathname === '/api/auth/reset-password') {
       if (ratelimit) {
-        const ip = request.headers.get('x-forwarded-for') || '127.0.0.1';
-        const { success } = await ratelimit.limit(ip);
-        if (!success) {
-          return NextResponse.json(
-            { 
-              statusCode: 429, 
-              message: 'Muitas tentativas de acesso. Por favor, aguarde um minuto antes de tentar novamente.', 
-              timestamp: new Date().toISOString(), 
-              path: pathname 
-            },
-            { status: 429 }
-          );
+        const rateLimitPassed = await evaluateRateLimit(request, pathname);
+        if (!rateLimitPassed) {
+          return buildRateLimitResponse(pathname);
         }
       }
     }
